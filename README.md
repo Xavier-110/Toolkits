@@ -9,26 +9,27 @@
 | 工具 | 入口 | 用途 |
 | --- | --- | --- |
 | 运维工具箱 | [Tools/ops_toolkit.html](Tools/ops_toolkit.html) | Kubernetes env / JSON 转换、格式化与排序、证书解析、本地配置管理、版本归档与备份 |
+| 在线运维工具箱 | [启动说明](Tools/ops-toolkit/README.md#在线启动) | 账号密码登录、白名单及三角色权限、共享配置与版本编辑／提交署名 |
 | Pointer API 可视化工具 | [Tools/point_tools.html](Tools/point_tools.html) | 配置服务地址、上传图片、查看检测结果、时延和可视化图层；需要可访问的 Pointer API 服务 |
 
-运维工具箱以单个 HTML 文件交付，解析依赖和样式已内嵌，可直接用 Chrome 或 Edge 打开。配置转换和证书解析在浏览器本地执行，使用已构建文件无需安装 Git 或 Node.js。
+运维工具箱离线版可直接用 Chrome 或 Edge 打开，在线版需要启动 Node.js 服务。两者解析依赖和样式均已内嵌，转换和证书解析在浏览器本地执行。
 
-配置与历史版本保存在当前浏览器来源的 IndexedDB 中，可通过导入、导出备份迁移。浏览器数据不会随 Git 提交自动同步；完整备份包含原始配置值，分享时可使用脱敏导出。
+离线配置与历史版本保存在当前浏览器来源的 IndexedDB，在线数据保存在服务端 SQLite，可通过导入、导出备份迁移。数据不会随 Git 提交自动同步；完整备份包含原始配置值，分享时可使用脱敏导出。
 
-当前已有离线工具实现。在线登录、账号白名单、服务端数据存储和团队协作属于后续规划，具体阶段与范围见[产品需求文档](Design/html-toolkit-requirements.md)。下文的 Git 对接指工程源码仓库的连接与协作，工具页面尚未提供 Git 自动同步功能。
+需求范围见[离线功能需求设计](../Design-doc/20260921-120758_运维工具箱离线功能需求设计/需求设计文档.md)和[登录权限与版本署名设计](../Design-doc/20260921-151727_用户登录权限管理与版本署名/需求设计文档.md)。所有设计文档统一存放于同级 [Design-doc](../Design-doc/README.md) 仓库，按首次创建时间戳和需求概要组织，每个需求目录包含设计文档和设计版本记录。工具页面尚未提供 Git 自动同步功能。
 
 ## 目录结构
 
 ```text
 Toolkits/
 ├─ README.md                         # 工程介绍与 Git 使用说明
-├─ Design/                           # 产品需求与设计
-│  └─ html-toolkit-requirements.md
 ├─ Tools/
 │  ├─ ops_toolkit.html               # 已构建的离线运维工具箱
+│  ├─ ops_toolkit_online.html        # 在线页面，由业务服务提供
 │  ├─ point_tools.html               # Pointer API 可视化工具
 │  └─ ops-toolkit/                   # 运维工具箱源码工程
 │     ├─ src/                        # 页面、样式、转换、证书与存储逻辑
+│     ├─ server/                     # 账号、权限、共享配置 API 与 SQLite
 │     ├─ tests/                      # 单元、浏览器与性能验证
 │     ├─ build.mjs                   # 单文件构建脚本
 │     ├─ serve.mjs                   # 本地静态服务

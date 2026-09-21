@@ -1,6 +1,9 @@
 import { convert, parseInput, serialize, parseJSON, byteSize, sensitivePaths, redact, diff, LIMITS } from './core.js';
-import { Repository, addConfig, saveDraft, makeDraft, archiveVersion, restoreVersion, configVersions, normalizeDraft, shouldAutoArchive, exportBackup, exportShare, validateBackup, importBackup } from './store.js';
+import { Repository, emptyState, addConfig, saveDraft, makeDraft, archiveVersion, restoreVersion, configVersions, normalizeDraft, shouldAutoArchive, exportBackup, exportShare, validateBackup, importBackup } from './store.js';
 import { parseCertificates, validity } from './certificates.js';
+import { ApiRepository } from './api.js';
+import { mountIdentity } from './identity.js';
+const online = __ONLINE__;
 
 const $ = id => document.getElementById(id);
 function el(tag, props = {}, ...children) {
@@ -27,9 +30,11 @@ function fillSelect(id, items, empty = null, preferred = undefined) {
   node.replaceChildren(...(empty !== null ? [opt('', empty)] : []), ...items.map(x => opt(x.value, x.text)));
   if ([...node.options].some(o => o.value === value)) node.value = value;
 }
-const localTime = value => new Date(value).toLocaleString('zh-CN', { hour12: false });
+const localTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, ...(online ? {timeZoneName:'short'} : {}) }) : '未记录';
+const authorship = v => `最后编辑：${v.editedByUsername || '未记录'} · ${localTime(v.editedAt)}${v.editorProvenance === 'imported' ? '（导入身份未验证）' : ''}\n${v.source === 'auto' ? '自动归档（关联用户：' + (v.submittedByUsername || '未记录') + '）' : '提交：' + (v.submittedByUsername || '未记录')} · ${localTime(v.submittedAt || v.createdAt)}${v.provenance === 'imported' ? '\n导入历史，身份未验证；导入者：' + v.importedByUsername + ' · ' + localTime(v.importedAt) : ''}`;
 const displayValue = v => v === undefined ? '（不存在）' : typeof v === 'string' ? v : serialize(v, 'asc', 2);
 function download(name, content, type = 'application/json') {
+  if (!canWrite()) throw Error('只读账号不能下载或导出');
   const url = URL.createObjectURL(new Blob([content], { type: `${type};charset=utf-8` }));
   const a = el('a', { href: url, download: name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
@@ -44,19 +49,31 @@ function modal(title, nodes, okay = '确认') {
   return new Promise(resolve => $('modal').addEventListener('close', () => resolve($('modal').returnValue === 'ok'), { once: true }));
 }
 const field = (label, value = '', props = {}) => { const input = el('input', { value, ...props }); return { input, node: el('label', { text: label }, input) }; };
-const repo = new Repository();
-let selected = '', editing = null, editEpoch = 0, dirty = false, lastEdit = 0, saveTimer, output = null, certificates = [], imported = null, certificateRun = 0;
+const repo = online ? new ApiRepository() : new Repository();
+const canWrite = () => !online || !!repo.user && repo.user.role !== 'readonly';
+let selected = '', editing = null, editingBaseRevision = null, editEpoch = 0, dirty = false, lastEdit = 0, saveTimer, output = null, certificates = [], imported = null, certificateRun = 0, importRun = 0;
 let mutationQueue = Promise.resolve();
-function mutate(fn) {
-  const next = mutationQueue.then(() => repo.mutate(fn)); mutationQueue = next.catch(() => {}); return next;
+function mutate(fn, command) {
+  const generation=repo.generation;
+  const next = mutationQueue.then(async () => {
+    if(online && generation!==repo.generation)throw Error('会话已切换');
+    if(!online)return repo.mutate(fn);
+    const editsSelected=command.id && command.id===selected && editing;
+    const result=await repo.command(editsSelected ? {...command,expectedRevision:editingBaseRevision} : command);
+    if(editsSelected && command.id===selected)editingBaseRevision=config()?.revision;
+    return result;
+  }); mutationQueue = next.catch(() => {}); return next;
 }
 const config = () => repo.state.configs.find(c => c.id === selected);
 function configLabel(c) { return `${repo.state.projects.find(p => p.id === c.projectId)?.name} / ${repo.state.environments.find(e => e.id === c.environmentId)?.name} / ${c.name}`; }
 async function navigate(page) {
+  if (online && !repo.user) return;
+  if (online && page==='backup' && !canWrite()) throw Error('只读账号不能导入或导出');
   if (page !== 'configs') await flushDraft();
+  if (online && page !== 'configs') {await repo.reload();selected='';editing=null;$('config-detail').hidden=true;$('config-empty').hidden=false;}
   document.querySelectorAll('.page').forEach(p => p.hidden = p.id !== `page-${page}`);
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  $('crumb').textContent = { convert: 'env / JSON', cert: '证书解析', configs: '配置管理', versions: '版本归档', backup: '数据备份' }[page];
+  $('crumb').textContent = { convert: 'env / JSON', cert: '证书解析', configs: '配置管理', versions: '版本归档', backup: '数据备份', users:'用户管理' }[page];
   if (page === 'configs') renderConfigs();
   if (page === 'cert' && certificates.length) renderCertificates();
   if (page === 'versions') renderHistory();
@@ -139,9 +156,12 @@ function renderCertificates() {
   }));
 }
 async function inspectFiles(files) {
+  const generation=repo.generation, run=++certificateRun;
   const list = [...files]; if (!list.length) return;
   if (list.length > 50 || list.reduce((n, f) => n + f.size, 0) > LIMITS.cert) throw Error('最多 50 个文件，合计不得超过 5 MiB');
-  await inspectCertificates(await Promise.all(list.map(async f => new Uint8Array(await f.arrayBuffer()))));
+  const inputs=await Promise.all(list.map(async f => new Uint8Array(await f.arrayBuffer())));
+  if(run!==certificateRun || generation!==repo.generation)return;
+  await inspectCertificates(inputs);
 }
 on('parse-cert', 'click', () => inspectCertificates([$('cert-input').value]));
 on('cert-file', 'change', e => inspectFiles(e.target.files));
@@ -155,6 +175,7 @@ on('cert-drop', 'drop', e => { e.preventDefault(); $('cert-drop').classList.remo
 
 // Configuration library and editing session.
 async function createConfigDialog(source = null, copyFrom = null) {
+  if (!canWrite()) throw Error('当前账号无写入权限');
   await flushDraft();
   const current = copyFrom || config(), p = field('项目', current ? repo.state.projects.find(p => p.id === current.projectId).name : '默认项目', { required: true, maxLength: 120 });
   const env = field('环境', copyFrom ? 'test' : current ? repo.state.environments.find(e => e.id === current.environmentId).name : 'dev', { required: true, maxLength: 120 });
@@ -163,7 +184,7 @@ async function createConfigDialog(source = null, copyFrom = null) {
   const area = el('textarea', { class: 'code-editor', rows: 10, required: true, value: source?.text || '{\n  "APP_NAME": "my-service"\n}' });
   format.value = source?.format || 'json';
   const existing = el('select', {}, opt('', '新建独立配置集'), ...repo.state.configs.filter(c => !c.archivedAt && (!source || source.kind === c.type)).map(c => opt(c.id, configLabel(c))));
-  const nodes = [el('p', { text: '保存后将启用本地草稿和版本管理。敏感字段在浏览器内以原值存储。' }), ...(!copyFrom && source ? [el('label', { text: '保存位置' }, existing)] : []), el('div', { class: 'form-grid' }, p.node, env.node, name.node), el('label', { class: 'block-label', text: '输入格式' }, format), area];
+  const nodes = [el('p', { text: online ? '保存后配置由团队共享，编辑者和提交者将记录在版本中。' : '保存后将启用本地草稿和版本管理。敏感字段在浏览器内以原值存储。' }), ...(!copyFrom && source ? [el('label', { text: '保存位置' }, existing)] : []), el('div', { class: 'form-grid' }, p.node, env.node, name.node), el('label', { class: 'block-label', text: '输入格式' }, format), area];
   existing.addEventListener('change', () => { p.input.required = env.input.required = name.input.required = !existing.value; });
   if (!await modal(copyFrom ? '复制到其他环境' : '保存配置集', nodes, '保存配置')) return;
   try {
@@ -177,8 +198,11 @@ async function createConfigDialog(source = null, copyFrom = null) {
       const old = state.drafts.find(d => d.configSetId === target.id);
       if (old) state.recoveryDrafts.push({ ...structuredClone(old), id: crypto.randomUUID(), reason: '从转换页更新前的草稿', createdAt: new Date().toISOString() });
       saveDraft(state, target.id, draft); archiveVersion(state, target.id, 'manual', '从转换页更新');
-    }); id = target.id;
-  } else id = await mutate(state => addConfig(state, { project: p.input.value, environment: env.input.value, name: name.input.value, type: parsed.kind, description: copyFrom?.description || '', tags: copyFrom?.tags || [], sourceConfigId: copyFrom?.id || null, itemMetadata: copyFrom?.itemMetadata || {} }, draft));
+    }, {type:'replace',id:target.id,data:{draft}}); id = target.id;
+  } else {
+    const data={ project: p.input.value, environment: env.input.value, name: name.input.value, type: parsed.kind, description: copyFrom?.description || '', tags: copyFrom?.tags || [], sourceConfigId: copyFrom?.id || null, itemMetadata: copyFrom?.itemMetadata || {} };
+    id = await mutate(state => addConfig(state,data,draft),{type:'create',data:{...data,draft}});
+  }
   await selectConfig(id); await navigate('configs'); toast('配置已保存，版本已归档');
   } catch (e) {
     $('convert-input').value = area.value; $('input-format').value = format.value; staleOutput();
@@ -207,11 +231,12 @@ async function selectConfig(id) {
   await flushDraft(); selected = id; const c = config();
   $('config-empty').hidden = !!c; $('config-detail').hidden = !c;
   if (!c) { editing = null; return; }
-  editing = structuredClone(repo.state.drafts.find(d => d.configSetId === id)); dirty = false; editEpoch++; $('config-reveal').checked = false; $('config-view').value = 'text';
+  editing = structuredClone(repo.state.drafts.find(d => d.configSetId === id)); editingBaseRevision=c.revision; dirty = false; editEpoch++; $('config-reveal').checked = false; $('config-view').value = 'text';
   $('config-title').textContent = c.name; $('config-type').textContent = c.type === 'json' ? 'JSON' : 'K8S ENV';
   $('config-name').value = c.name; $('config-tags').value = c.tags.join(', '); $('config-description').value = c.description;
   $('sensitive-metadata').value = Object.entries(c.itemMetadata || {}).map(([k, val]) => (val ? '' : '!') + k).join('\n');
-  $('config-format').value = editing.inputFormat; $('config-format').disabled = !!c.archivedAt;
+  $('config-format').value = editing.inputFormat; $('config-format').disabled = !!c.archivedAt || !canWrite();
+  for(const key of ['config-name','config-tags','config-description','sensitive-metadata'])$(key).readOnly=!canWrite();
   $('archive-config').textContent = c.archivedAt ? '恢复配置集' : '归档配置集';
   $('save-version').disabled = !!c.archivedAt; $('save-metadata').disabled = !!c.archivedAt;
   updateEditorView(); updateSaveBadges(); renderRecovery(); renderConfigs();
@@ -219,7 +244,8 @@ async function selectConfig(id) {
 }
 function updateSaveBadges() {
   if (!config()) return;
-  $('draft-status').textContent = dirty ? '草稿待保存' : '草稿已保存'; $('draft-status').className = 'pill' + (dirty ? '' : ' good');
+  const saved=repo.state.drafts.find(d=>d.configSetId===selected);
+  $('draft-status').textContent = dirty ? '草稿待保存' : '草稿已保存'+(online ? ` · ${saved?.editedByUsername || '未记录'} · ${localTime(saved?.editedAt)}${saved?.provenance==='imported'?' · 导入历史，身份未验证':''}` : ''); $('draft-status').className = 'pill' + (dirty ? '' : ' good');
   const latest = repo.state.versions.find(v => v.id === config().latestVersionId);
   $('version-status').textContent = latest ? `已归档为 v${latest.versionNumber}` : '尚无版本';
 }
@@ -234,7 +260,7 @@ function updateEditorView() {
   } catch (e) {
     masked = !reveal; $('config-editor').value = reveal ? editing.rawInput : '草稿包含无效内容。为避免暴露敏感值，请勾选“显示并编辑敏感内容”后继续修复。'; notice('config-validation', '草稿尚未通过校验，正式版本不会更新。', 'warning');
   }
-  $('config-editor').readOnly = masked || !!c.archivedAt;
+  $('config-editor').readOnly = masked || !!c.archivedAt || !canWrite();
   const table = $('config-view').value === 'table' && c.type === 'k8s-env';
   $('config-editor').hidden = table; $('env-table').hidden = !table;
   if (table) renderEnvTable(parsed, reveal);
@@ -247,26 +273,28 @@ function renderEnvTable(parsed, reveal) {
   function apply() { editing.rawInput = serialize(rows, 'none'); editing.inputFormat = 'env-json'; $('config-format').value = 'env-json'; markEdited(); }
   rows.forEach((row, i) => {
     const masked = hidden.has(row.name) && !reveal;
-    const name = el('input', { value: row.name, ariaLabel: `第 ${i + 1} 项名称`, disabled: masked || !!config().archivedAt });
-    const value = el('textarea', { value: masked ? '••••' : row.valueFrom ? serialize(row.valueFrom, 'none') : row.value, rows: row.valueFrom ? 4 : 2, disabled: masked || !!config().archivedAt, ariaLabel: `第 ${i + 1} 项值` });
+    const name = el('input', { value: row.name, ariaLabel: `第 ${i + 1} 项名称`, disabled: masked || !!config().archivedAt || !canWrite() });
+    const value = el('textarea', { value: masked ? '••••' : row.valueFrom ? serialize(row.valueFrom, 'none') : row.value, rows: row.valueFrom ? 4 : 2, disabled: masked || !!config().archivedAt || !canWrite(), ariaLabel: `第 ${i + 1} 项值` });
     name.addEventListener('change', () => { row.name = name.value; apply(); updateEditorView(); });
     value.addEventListener('change', () => { try { if (row.valueFrom) row.valueFrom = parseJSON(value.value); else row.value = value.value; apply(); updateEditorView(); } catch (e) { toast(e.message, true); } });
-    const remove = el('button', { text: '删除', class: 'danger quiet', disabled: !!config().archivedAt, onclick: () => { rows.splice(i, 1); apply(); updateEditorView(); } });
+    const remove = el('button', { text: '删除', class: 'danger quiet', disabled: !!config().archivedAt || !canWrite(), onclick: () => { rows.splice(i, 1); apply(); updateEditorView(); } });
     body.append(el('tr', {}, el('td', {}, name), el('td', {}, value), el('td', {}, remove)));
-  }); table.append(body); host.append(table, el('button', { text: '＋ 增加变量', disabled: !!config().archivedAt, onclick: () => { let i = rows.length + 1; while (rows.some(r => r.name === `NEW_VAR_${i}`)) i++; rows.push({ name: `NEW_VAR_${i}`, value: '' }); apply(); updateEditorView(); } }));
+  }); table.append(body); host.append(table, el('button', { text: '＋ 增加变量', disabled: !!config().archivedAt || !canWrite(), onclick: () => { let i = rows.length + 1; while (rows.some(r => r.name === `NEW_VAR_${i}`)) i++; rows.push({ name: `NEW_VAR_${i}`, value: '' }); apply(); updateEditorView(); } }));
 }
 function markEdited() {
+  if(!canWrite())return;
   dirty = true; lastEdit = Date.now(); editEpoch++; clearTimeout(saveTimer); updateSaveBadges();
   saveTimer = setTimeout(() => flushDraft().catch(e => { $('draft-status').textContent = '草稿保存失败'; toast(e.message, true); }), 800);
 }
 async function flushDraft() {
+  if(!canWrite())return;
   if (!dirty || !editing || !selected) return;
   clearTimeout(saveTimer); const id = selected, epoch = editEpoch, snapshot = makeDraft(editing.rawInput, editing.inputFormat, editing.options);
-  await mutate(state => saveDraft(state, id, snapshot));
+  await mutate(state => saveDraft(state, id, snapshot),{type:'draft',id,data:{draft:snapshot}});
   if (selected === id && editEpoch === epoch) { dirty = false; editing = { ...editing, ...snapshot }; updateSaveBadges(); }
 }
 function renderRecovery() {
-  $('recovery-list').replaceChildren(...repo.state.recoveryDrafts.filter(d => d.configSetId === selected).map(d => el('div', { class: 'row border-top' }, el('span', { class: 'grow small', text: `${d.reason} · ${localTime(d.createdAt)}` }), el('button', { text: '下载草稿', onclick: () => download(`${config().name}-recovery.${d.inputFormat === 'yaml' ? 'yaml' : 'json'}`, d.rawInput, 'text/plain') }))));
+  $('recovery-list').replaceChildren(...repo.state.recoveryDrafts.filter(d => d.configSetId === selected).map(d => el('div', { class: 'row border-top' }, el('span', { class: 'grow small', text: `${d.reason} · ${localTime(d.createdAt)}` }), el('button', { class:'write-action', text: '下载草稿', onclick: () => download(`${config().name}-recovery.${d.inputFormat === 'yaml' ? 'yaml' : 'json'}`, d.rawInput, 'text/plain') }))));
   if (!$('recovery-list').childNodes.length) $('recovery-list').textContent = '暂无恢复草稿';
 }
 on('new-config', 'click', () => createConfigDialog());
@@ -275,7 +303,7 @@ on('config-editor', 'input', () => { editing.rawInput = $('config-editor').value
 on('config-format', 'change', () => { editing.inputFormat = $('config-format').value; markEdited(); updateEditorView(); });
 on('config-view', 'change', updateEditorView); on('config-reveal', 'change', updateEditorView);
 on('save-version', 'click', async () => {
-  await flushDraft(); const version = await mutate(state => archiveVersion(state, selected, 'manual', $('version-note').value.trim()));
+  await flushDraft(); const version = await mutate(state => archiveVersion(state, selected, 'manual', $('version-note').value.trim()),{type:'submit',id:selected,data:{note:$('version-note').value.trim()}});
   $('version-note').value = ''; updateSaveBadges(); updateEditorView(); renderConfigs(); toast(version ? `已归档为 v${version.versionNumber}` : '内容未变化，无需创建重复版本');
 });
 on('download-draft', 'click', () => { if (editing) download(`${config().name}-${repo.state.environments.find(e => e.id === config().environmentId)?.name}-draft.${editing.inputFormat === 'yaml' ? 'yaml' : 'json'}`, editing.rawInput, 'text/plain'); });
@@ -286,18 +314,19 @@ on('save-metadata', 'click', async () => {
     const c = state.configs.find(c => c.id === selected), name = $('config-name').value.trim();
     if (!name || name.length > 120 || state.configs.some(x => x.id !== c.id && x.projectId === c.projectId && x.environmentId === c.environmentId && x.name === name)) throw Error('配置名为空、过长或与同环境的配置重复');
     c.name = name; c.description = $('config-description').value; c.tags = $('config-tags').value.split(/[,，]/).map(x => x.trim()).filter(Boolean); c.itemMetadata = metadata; c.updatedAt = new Date().toISOString(); c.revision++;
-  }); $('config-title').textContent = config().name; updateEditorView(); renderConfigs(); toast('元数据已保存');
+  },{type:'metadata',id:selected,data:{name:$('config-name').value.trim(),description:$('config-description').value,tags:$('config-tags').value.split(/[,，]/).map(x=>x.trim()).filter(Boolean),itemMetadata:metadata}}); $('config-title').textContent = config().name; updateEditorView(); renderConfigs(); toast('元数据已保存');
 });
 on('copy-config', 'click', () => createConfigDialog({ text: editing.rawInput, format: editing.inputFormat, kind: config().type }, config()));
-on('archive-config', 'click', async () => { await flushDraft(); await mutate(state => { const c = state.configs.find(c => c.id === selected); c.archivedAt = c.archivedAt ? null : new Date().toISOString(); c.revision++; }); await selectConfig(selected); });
+on('archive-config', 'click', async () => { await flushDraft(); await mutate(state => { const c = state.configs.find(c => c.id === selected); c.archivedAt = c.archivedAt ? null : new Date().toISOString(); c.revision++; },{type:'archive',id:selected,data:{}}); await selectConfig(selected); });
 on('delete-config', 'click', async () => {
   const id = selected, c = config(), count = configVersions(repo.state, id).length;
   if (!await modal('删除配置集', [el('p', { text: `删除“${c.name}”及其 ${count} 个版本、当前草稿和恢复草稿？此操作不可撤销，可先到数据备份页导出。` })], '删除配置集')) return;
-  await mutate(state => { for (const key of ['configs', 'versions', 'drafts', 'recoveryDrafts']) state[key] = state[key].filter(x => key === 'configs' ? x.id !== id : x.configSetId !== id); });
+  await mutate(state => { for (const key of ['configs', 'versions', 'drafts', 'recoveryDrafts']) state[key] = state[key].filter(x => key === 'configs' ? x.id !== id : x.configSetId !== id); },{type:'delete',id,data:{}});
   dirty = false; selected = ''; editing = null; clearTimeout(saveTimer); $('config-detail').hidden = true; $('config-empty').hidden = false; renderConfigs(); toast('配置集已删除');
 });
 on('config-history', 'click', async () => { await flushDraft(); renderHistory(selected); await navigate('versions'); });
 setInterval(async () => {
+  if(online)return;
   if (!selected || dirty || !repo.persistent || !shouldAutoArchive(repo.state, selected, lastEdit)) return;
   try { await mutate(state => shouldAutoArchive(state, selected, lastEdit) ? archiveVersion(state, selected, 'auto', '自动归档') : null); updateSaveBadges(); }
   catch (e) { repo.state.settings.autoArchiveEnabled = false; toast(`自动归档已暂停：${e.message}`, true); }
@@ -310,13 +339,13 @@ function renderHistory(preferred) {
   const id = $('history-config').value, versions = configVersions(repo.state, id);
   fillSelect('diff-left', versions.map(v => ({ value: v.id, text: `v${v.versionNumber} · ${localTime(v.createdAt)}` })), null, versions[1]?.id || versions[0]?.id);
   fillSelect('diff-right', [...versions.map(v => ({ value: v.id, text: `v${v.versionNumber} · ${localTime(v.createdAt)}` })), ...(id ? [{ value: 'draft', text: '当前草稿（未归档）' }] : [])], null, versions[0]?.id);
-  $('version-list').replaceChildren(...versions.map(v => el('div', { class: 'version-card' }, el('div', { class: 'row' }, el('strong', { text: `v${v.versionNumber}` }), el('span', { class: 'pill', text: ({ auto: '自动归档', restore: '恢复版本', create: '首次保存', manual: '手动保存' })[v.source] || v.source })), el('p', { text: v.note || '无备注' }), el('time', { text: localTime(v.createdAt) }), el('div', { class: 'row' }, el('button', { text: '查看', onclick: () => { $('diff-right').value = v.id; compareVersions(); } }), el('button', { text: '恢复此版本', onclick: () => restoreDialog(id, v.id).catch(e => toast(e.message, true)) }), el('button', { text: '下载', onclick: () => { const c = repo.state.configs.find(x => x.id === id); download(`${c.name}-v${v.versionNumber}.${v.inputFormat === 'yaml' ? 'yaml' : 'json'}`, v.rawInput, 'text/plain'); } })) )));
+  $('version-list').replaceChildren(...versions.map(v => el('div', { class: 'version-card' }, el('div', { class: 'row' }, el('strong', { text: `v${v.versionNumber}` }), el('span', { class: 'pill', text: ({ auto: '自动归档', restore: '恢复版本', create: '首次保存', manual: '手动保存' })[v.source] || v.source })), el('p', { text: v.note || '无备注' }), el('time', { text: localTime(v.createdAt) }), ...(online ? [el('div',{class:'authorship',text:authorship(v)})] : []), el('div', { class: 'row' }, el('button', { text: '查看', onclick: () => { $('diff-right').value = v.id; compareVersions(); } }), el('button', { class:'write-action', text: '恢复此版本', onclick: () => restoreDialog(id, v.id).catch(e => toast(e.message, true)) }), el('button', { class:'write-action', text: '下载', onclick: () => { const c = repo.state.configs.find(x => x.id === id); download(`${c.name}-v${v.versionNumber}.${v.inputFormat === 'yaml' ? 'yaml' : 'json'}`, v.rawInput, 'text/plain'); } })) )));
   if (!versions.length) $('version-list').append(el('div', { class: 'empty-state' }, el('h3', { text: '尚无版本' }), el('p', { text: '保存配置集后即可查看历史。' })));
   $('diff-results').replaceChildren(); $('diff-left-text').textContent = ''; $('diff-right-text').textContent = ''; notice('diff-summary', '选择两个版本，或与当前草稿比较。');
 }
 function comparisonRecord(id, choice) {
   const c = repo.state.configs.find(x => x.id === id);
-  if (choice === 'draft') { const d = id === selected && editing ? editing : repo.state.drafts.find(x => x.configSetId === id); return { normalizedContent: normalizeDraft(d, c.type).data, itemMetadata: c.itemMetadata, rawInput: d.rawInput }; }
+  if (choice === 'draft') { const d = id === selected && editing ? editing : repo.state.drafts.find(x => x.configSetId === id); return { ...d, normalizedContent: normalizeDraft(d, c.type).data, itemMetadata: c.itemMetadata, rawInput: d.rawInput }; }
   const v = repo.state.versions.find(x => x.id === choice && x.configSetId === id); if (!v) throw Error('请先选择配置集和版本'); return v;
 }
 function combinedMetadata(c, left, right) {
@@ -331,7 +360,7 @@ function compareVersions() {
   try {
     const id = $('history-config').value, c = repo.state.configs.find(x => x.id === id), left = comparisonRecord(id, $('diff-left').value), right = comparisonRecord(id, $('diff-right').value), meta = combinedMetadata(c, left, right), reveal = $('diff-reveal').checked;
     const rows = diff(left.normalizedContent, right.normalizedContent, c.type, meta, reveal);
-    $('diff-results').replaceChildren(diffTable(rows));
+    $('diff-results').replaceChildren(...(online ? [el('div',{class:'authorship',text:'左侧\n'+authorship(left)+'\n\n右侧\n'+authorship(right)})] : []),diffTable(rows));
     notice('diff-summary', `${$('diff-left').selectedOptions[0].text} → ${$('diff-right').selectedOptions[0].text}\n${rows.length ? `${rows.length} 处变化` : '内容一致'}${reveal ? ' · 正在显示原值' : ' · 敏感内容已遮罩'}`, 'success');
     $('diff-left-text').textContent = reveal ? left.rawInput : serialize(redact(left.normalizedContent, c.type, meta));
     $('diff-right-text').textContent = reveal ? right.rawInput : serialize(redact(right.normalizedContent, c.type, meta));
@@ -342,11 +371,11 @@ async function restoreDialog(id, versionId) {
   if (c.archivedAt) throw Error('请先在配置管理中恢复已归档的配置集');
   const changes = diff(current.normalizedContent, target.normalizedContent, c.type, combinedMetadata(c, current, target));
   if (!await modal(`恢复 ${c.name} · v${target.versionNumber}`, [el('p', { text: '以下比较当前归档版本和目标版本。恢复前草稿将单独保留；历史版本不会覆盖。相同内容不会创建重复版本。' }), diffTable(changes)], '确认恢复')) return;
-  const v = await mutate(state => restoreVersion(state, id, versionId));
+  const v = await mutate(state => restoreVersion(state, id, versionId),{type:'restore',id,data:{versionId}});
   if (selected === id) { dirty = false; await selectConfig(id); }
   renderHistory(id); toast(v ? `已恢复并创建 v${v.versionNumber}` : '目标内容与最新版本一致，草稿已同步');
 }
-on('history-config', 'change', () => renderHistory()); on('refresh-history', 'click', () => renderHistory()); on('compare-versions', 'click', compareVersions); on('diff-reveal', 'change', compareVersions);
+on('history-config', 'change', () => renderHistory()); on('refresh-history', 'click', async () => {if(online)await repo.reload();renderHistory();}); on('compare-versions', 'click', compareVersions); on('diff-reveal', 'change', compareVersions);
 on('clean-history', 'click', async () => {
   const id = $('history-config').value, c = repo.state.configs.find(x => x.id === id); if (!c) throw Error('请先选择配置集');
   const versions = configVersions(repo.state, id).filter(v => v.id !== c.latestVersionId), checks = versions.map(v => ({ v, input: el('input', { type: 'checkbox' }) }));
@@ -358,7 +387,7 @@ on('clean-history', 'click', async () => {
     state.versions = state.versions.filter(v => !ids.has(v.id));
     for (const v of state.versions) if (ids.has(v.restoredFromVersionId)) v.restoredFromVersionId = null;
     for (const d of [...state.drafts, ...state.recoveryDrafts]) if (ids.has(d.baseVersionId)) d.baseVersionId = null;
-  }); renderHistory(id); toast(`已清理 ${ids.size} 个旧版本`);
+  },{type:'clean',id,data:{versionIds:[...ids]}}); renderHistory(id); toast(`已清理 ${ids.size} 个旧版本`);
 });
 
 // Backup import is validated before any transaction is started.
@@ -366,39 +395,48 @@ function renderBackup() {
   const s = repo.state; $('backup-stats').replaceChildren(...[['项目', s.projects.length], ['配置集', s.configs.length], ['归档版本', s.versions.length], ['当前草稿', s.drafts.length]].map(([label, count]) => el('div', { class: 'stat' }, el('strong', { text: String(count) }), el('span', { text: label }))));
   fillSelect('backup-scope', s.configs.map(c => ({ value: c.id, text: configLabel(c) })), '整个工作空间');
 }
-on('export-backup', 'click', async () => { await flushDraft(); download(`ops-toolkit-backup-${new Date().toISOString().slice(0, 10)}.json`, serialize(exportBackup(repo.state, $('backup-scope').value))); toast('已导出完整备份，文件包含配置原值'); });
-on('preview-share', 'click', () => { $('share-preview').hidden = false; $('share-preview').textContent = serialize(exportShare(repo.state, $('backup-scope').value)); });
-on('export-share', 'click', () => download('ops-toolkit-redacted-share.json', serialize(exportShare(repo.state, $('backup-scope').value))));
+on('export-backup', 'click', async () => { await flushDraft(); const backup=online ? await repo.backup($('backup-scope').value) : exportBackup(repo.state,$('backup-scope').value);download(`ops-toolkit-backup-${new Date().toISOString().slice(0, 10)}.json`, serialize(backup)); toast('已导出完整备份，文件包含配置原值'); });
+on('preview-share', 'click', async () => { const share=online ? await repo.backup($('backup-scope').value,true) : exportShare(repo.state,$('backup-scope').value);$('share-preview').hidden = false; $('share-preview').textContent = serialize(share); });
+on('export-share', 'click', async () => {const share=online ? await repo.backup($('backup-scope').value,true) : exportShare(repo.state,$('backup-scope').value);download('ops-toolkit-redacted-share.json',serialize(share));});
 on('backup-file', 'change', async e => {
+  const generation=repo.generation, run=++importRun;
   imported = null; $('import-backup').disabled = true; const file = e.target.files[0]; if (!file) return;
   if (file.size > LIMITS.backup) throw Error('备份超过 20 MiB');
   try {
-    imported = validateBackup(await file.text()); const s = imported.workspace;
+    const text=await file.text();if(generation!==repo.generation || run!==importRun)return;
+    const data=online ? parseJSON(text,LIMITS.backup) : null;
+    imported = online && data.schemaVersion===2 ? {...validateBackup(JSON.stringify({...data,schemaVersion:1})),schemaVersion:2} : validateBackup(text); const s = imported.workspace;
     const conflicts = s.configs.filter(c => repo.state.configs.some(x => x.name === c.name && repo.state.projects.find(p => p.id === x.projectId)?.name === s.projects.find(p => p.id === c.projectId)?.name && repo.state.environments.find(e => e.id === x.environmentId)?.name === s.environments.find(e => e.id === c.environmentId)?.name));
     notice('import-preview', `校验通过：${s.projects.length} 个项目，${s.configs.length} 个配置集，${s.versions.length} 个版本，${s.drafts.length} 个草稿。\n${conflicts.length ? '同名冲突：' + conflicts.map(c => c.name).join('、') + '\n将以新项目副本导入，或勾选跳过同名配置。' : '未发现同名冲突。'}`, 'success'); $('import-backup').disabled = false;
   } catch (e) { notice('import-preview', e.message, 'error'); }
 });
 on('import-backup', 'click', async () => {
   if (!imported) return; await flushDraft();
-  const count = await mutate(state => importBackup(state, imported, $('skip-conflicts').checked, $('import-settings').checked));
+  const count = await mutate(state => importBackup(state, imported, $('skip-conflicts').checked, $('import-settings').checked),{type:'import',data:{backup:imported,skipConflicts:$('skip-conflicts').checked,importSettings:$('import-settings').checked}});
   imported = null; $('import-backup').disabled = true; $('backup-file').value = ''; applySettings(); renderBackup(); renderConfigs(); notice('import-preview', `成功导入 ${count} 个配置集，所有关联已重映射。`, 'success');
 });
 on('reload-data', 'click', async () => {
   if (!await modal('重新载入本地数据', [el('p', { text: '将读取其他标签页写入的最新数据。如有未保存草稿，确认前请先下载草稿，重新载入会放弃当前内存编辑。' })], '重新载入')) return;
   clearTimeout(saveTimer); await mutationQueue; await repo.reload(); dirty = false; editing = null; selected = ''; $('config-detail').hidden = true; $('config-empty').hidden = false; applySettings(); renderBackup(); renderConfigs(); renderHistory(); toast('已载入本地最新数据');
 });
-function applySettings() { document.documentElement.dataset.theme = repo.state.settings.theme; const next = repo.state.settings.sort || 'asc'; if ($('sort').value !== next) { $('sort').value = next; staleOutput(); } }
+function applySettings() {
+  let theme=repo.state.settings.theme;
+  if(online){try{const saved=localStorage.getItem('ops-theme');if(['dark','light'].includes(saved))theme=saved;}catch{}}
+  document.documentElement.dataset.theme=theme;
+  const next = repo.state.settings.sort || 'asc'; if ($('sort').value !== next) { $('sort').value = next; staleOutput(); }
+}
 on('theme-toggle', 'click', async () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  if (repo.persistent) await mutate(s => { s.settings.theme = next; }); else repo.state.settings.theme = next;
+  if(online){localStorage.setItem('ops-theme',next);repo.state.settings.theme=next;}
+  else if (repo.persistent) await mutate(s => { s.settings.theme = next; }); else repo.state.settings.theme = next;
   document.documentElement.dataset.theme = next;
 });
 on('settings-open', 'click', async () => {
   const auto = el('input', { type: 'checkbox', checked: repo.state.settings.autoArchiveEnabled }), days = field('证书到期提醒阈值（天）', repo.state.settings.expiryWarningDays, { type: 'number', min: 0, max: 3650, required: true });
   const sort = el('select', {}, opt('asc', '自动排序 · 升序'), opt('desc', '自动排序 · 降序'), opt('none', '保持原序')); sort.value = repo.state.settings.sort || 'asc';
-  if (!await modal('工具设置', [el('label', { class: 'check' }, auto, '自动归档有效改动（间隔至少 60 秒）'), days.node, el('label', { text: '默认排序' }, sort), el('p', { text: '已纳管草稿在停止输入 800 毫秒后保存。数据仅存于当前浏览器来源，建议定期导出备份。' })], '保存设置')) return;
+  if (!await modal('工具设置', [el('label', { class: 'check' }, auto, '自动归档有效改动（间隔至少 60 秒）'), days.node, el('label', { text: '默认排序' }, sort), el('p', { text: online ? '草稿在停止输入 800 毫秒后保存到服务端，自动归档由服务端执行。' : '已纳管草稿在停止输入 800 毫秒后保存。数据仅存于当前浏览器来源，建议定期导出备份。' })], '保存设置')) return;
   const apply = s => { s.settings.autoArchiveEnabled = auto.checked; s.settings.expiryWarningDays = Number(days.input.value); s.settings.sort = sort.value; };
-  if (repo.persistent) await mutate(apply); else apply(repo.state); applySettings(); staleOutput(); if (certificates.length) renderCertificates(); toast('设置已更新');
+  if (repo.persistent) await mutate(apply,{type:'settings',data:{autoArchiveEnabled:auto.checked,expiryWarningDays:Number(days.input.value),sort:sort.value}}); else apply(repo.state); applySettings(); staleOutput(); if (certificates.length) renderCertificates(); toast('设置已更新');
 });
 async function initialize() {
   loadExample('basic');
@@ -409,4 +447,29 @@ async function initialize() {
   const drafts = repo.state.drafts.filter(d => d.rawInput !== repo.state.versions.find(v => v.id === d.baseVersionId)?.rawInput);
   if (drafts.length) toast(`发现 ${drafts.length} 份未归档草稿，可在配置管理中打开继续编辑。`);
 }
-initialize().catch(e => toast(e.message, true));
+if(!online) initialize().catch(e => toast(e.message, true));
+else {
+  window.opsNavigate=navigate;
+  let pending=null;
+  mountIdentity({repo,notify:toast,ready:async()=>{
+    loadExample('basic');applySettings();renderConfigs();renderHistory();renderBackup();
+    $('storage-status').textContent='● 共享存储已连接';$('storage-status').className='pill good';
+    await navigate('convert');
+    if(pending && pending.userId===repo.user.id && canWrite() && repo.state.configs.some(c=>c.id===pending.id)){
+      const saved=pending;pending=null;await selectConfig(saved.id);editing=saved.editing;dirty=true;
+      // Keep the old revision: recovered text must not silently overwrite newer edits.
+      editingBaseRevision=saved.revision;updateEditorView();updateSaveBadges();await navigate('configs');toast('已恢复会话失效前的内存草稿，请确认后保存');
+    }else pending=null;
+  },lost:(reason,previous)=>{
+    if(reason==='expired'&&dirty&&editing&&previous)pending={userId:previous.id,id:selected,editing:structuredClone(editing),revision:editingBaseRevision};
+    else if(reason!=='expired')pending=null;
+    clearTimeout(saveTimer);dirty=false;selected='';editing=null;output=null;certificates=[];imported=null;certificateRun++;importRun++;mutationQueue=Promise.resolve();
+    if($('modal').open)$('modal').close('cancel');$('modal-body').replaceChildren();
+    for(const id of ['config-list','version-list','diff-results','diff-left-text','diff-right-text','share-preview','cert-results','recovery-list','config-title'])$(id).replaceChildren();
+    for(const node of document.querySelectorAll('main input,main textarea'))if(node.type!=='checkbox')node.value='';
+    for(const id of ['history-config','diff-left','diff-right','backup-scope','project-filter','env-filter'])$(id).replaceChildren();
+    for(const id of ['user-role-filter','user-status-filter'])$(id).selectedIndex=0;
+    $('config-detail').hidden=true;$('config-empty').hidden=false;$('toast').hidden=true;
+    $('import-backup').disabled=true;notice('import-preview','选择备份后可校验并导入为副本。');
+  }});
+}
