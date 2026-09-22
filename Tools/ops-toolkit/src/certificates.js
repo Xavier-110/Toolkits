@@ -1,8 +1,9 @@
 import { fromBER } from 'asn1js';
-import { Certificate, RSAPublicKey } from 'pkijs';
+import { Certificate, RSAPublicKey, RSASSAPSSParams, AlgorithmIdentifier } from 'pkijs';
 import { hash, byteSize, LIMITS } from './core.js';
 
 const OIDS = {
+  '1.3.14.3.2.26': 'SHA-1', '2.16.840.1.101.3.4.2.1': 'SHA-256', '2.16.840.1.101.3.4.2.2': 'SHA-384', '2.16.840.1.101.3.4.2.3': 'SHA-512', '1.2.840.113549.1.1.8': 'MGF1',
   '2.5.4.3': 'CN', '2.5.4.6': 'C', '2.5.4.7': 'L', '2.5.4.8': 'ST', '2.5.4.10': 'O', '2.5.4.11': 'OU', '1.2.840.113549.1.9.1': 'emailAddress',
   '1.2.840.113549.1.1.1': 'RSA', '1.2.840.113549.1.1.5': 'SHA-1 / RSA', '1.2.840.113549.1.1.10': 'RSA-PSS', '1.2.840.113549.1.1.11': 'SHA-256 / RSA', '1.2.840.113549.1.1.12': 'SHA-384 / RSA', '1.2.840.113549.1.1.13': 'SHA-512 / RSA',
   '1.2.840.10045.2.1': 'EC', '1.2.840.10045.4.3.2': 'ECDSA / SHA-256', '1.2.840.10045.4.3.3': 'ECDSA / SHA-384', '1.2.840.10045.4.3.4': 'ECDSA / SHA-512',
@@ -37,9 +38,19 @@ export function parseDER(bytes, days = 30, clock = Date.now()) {
     version: cert.version + 1, serialNumber: hex(cert.serialNumber.valueBlock.valueHexView),
     subject: dn(cert.subject), issuer: dn(cert.issuer), notBefore, notAfter, ...validity(notBefore, notAfter, days, clock),
     signatureAlgorithm: oid(cert.signatureAlgorithm.algorithmId), publicKeyAlgorithm: oid(cert.subjectPublicKeyInfo.algorithm.algorithmId),
-    publicKeyParameters: '未提供', sha256: hash(bytes).toUpperCase().match(/.{2}/g).join(':'),
+    signatureParameters: '未提供', publicKeyParameters: '未提供', sha256: hash(bytes).toUpperCase().match(/.{2}/g).join(':'),
     subjectAltName: [], keyUsage: [], extendedKeyUsage: [], basicConstraints: null, extensions: [], warnings: [],
   };
+  const signatureParams=cert.signatureAlgorithm.algorithmParams;
+  if(signatureParams){
+    try{
+      if(cert.signatureAlgorithm.algorithmId==='1.2.840.113549.1.1.10'){
+        const pss=new RSASSAPSSParams({schema:signatureParams});
+        const mgfHash=pss.maskGenAlgorithm.algorithmId==='1.2.840.113549.1.1.8'?new AlgorithmIdentifier({schema:pss.maskGenAlgorithm.algorithmParams}).algorithmId:null;
+        result.signatureParameters=`Hash: ${oid(pss.hashAlgorithm.algorithmId)}\nMask: ${oid(pss.maskGenAlgorithm.algorithmId)}${mgfHash?` / ${oid(mgfHash)}`:''}\nSalt length: ${pss.saltLength}\nTrailer field: ${pss.trailerField}`;
+      }else result.signatureParameters=signatureParams.idBlock.tagNumber===5?'NULL（无附加参数）':`DER: ${hex(new Uint8Array(signatureParams.toBER(false)))}`;
+    }catch{result.signatureParameters=`DER: ${hex(new Uint8Array(signatureParams.toBER(false)))}`;result.warnings.push('签名参数无法解析，已保留原始DER，其余字段仍可查看');}
+  }
   const pub = cert.subjectPublicKeyInfo;
   try {
     if (pub.algorithm.algorithmId === '1.2.840.113549.1.1.1') {

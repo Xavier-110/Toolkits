@@ -15,7 +15,7 @@ export function makeDraft(rawInput, inputFormat, options = {}) {
   try { parseInput(rawInput, inputFormat, options.coerce || false); } catch (e) { validationState = e.message; }
   return { rawInput, inputFormat, options, validationState, updatedAt: now() };
 }
-export function addConfig(state, { project, environment, name, type, description = '', tags = [], sourceConfigId = null, itemMetadata = {} }, draft) {
+export function addConfig(state, { project, environment, name, type, description = '', tags = [], sourceConfigId = null, itemMetadata = {} }, draft, context) {
   for (const [label, value] of Object.entries({ 项目: project, 环境: environment, 配置名: name })) if (typeof value !== 'string' || !value.trim() || value.length > 120) throw Error(`${label}须为 1～120 个字符`);
   project = project.trim(); environment = environment.trim(); name = name.trim();
   let p = state.projects.find(x => x.name === project);
@@ -24,35 +24,42 @@ export function addConfig(state, { project, environment, name, type, description
   if (!env) { env = { id: uuid(), projectId: p.id, name: environment }; state.environments.push(env); }
   if (state.configs.some(x => x.projectId === p.id && x.environmentId === env.id && x.name === name)) throw Error('该项目和环境下已存在同名配置集');
   const config = { id: uuid(), projectId: p.id, environmentId: env.id, name, type, description, tags, sourceConfigId, createdAt: now(), updatedAt: now(), archivedAt: null, latestVersionId: null, nextVersionNumber: 1, revision: 0, itemMetadata: structuredClone(itemMetadata) };
-  state.configs.push(config); saveDraft(state, config.id, draft); archiveVersion(state, config.id, 'create', '首次保存'); return config.id;
+  if (context) { config.createdAt = config.updatedAt = context.time; p.createdAt = p.createdAt || context.time; }
+  state.configs.push(config); saveDraft(state, config.id, draft, context); archiveVersion(state, config.id, 'create', '首次保存', null, context); return config.id;
 }
-export function saveDraft(state, id, draft) {
+export function saveDraft(state, id, draft, context) {
   const config = state.configs.find(c => c.id === id); if (!config) throw Error('配置集不存在');
   if (byteSize(draft.rawInput) > LIMITS.config) throw Error('草稿超过 1 MiB，未写入本地存储；请下载内容后缩减输入');
   const index = state.drafts.findIndex(d => d.configSetId === id);
   const record = { ...draft, configSetId: id, baseVersionId: config.latestVersionId, revision: config.revision + 1, updatedAt: now() };
+  if (context) Object.assign(record, {editedByUserId:context.user.id, editedByUsername:context.user.username, editedAt:context.time, updatedAt:context.time, provenance:'local'});
   if (index < 0) state.drafts.push(record); else state.drafts[index] = record;
-  config.revision++; config.updatedAt = now(); return record;
+  config.revision++; config.updatedAt = context?.time || now(); return record;
 }
-export function archiveVersion(state, id, source = 'manual', note = '', restoredFromVersionId = null) {
+export function archiveVersion(state, id, source = 'manual', note = '', restoredFromVersionId = null, context) {
   const config = state.configs.find(c => c.id === id);
   if (!config || config.archivedAt) throw Error('配置不存在或已归档，请先恢复配置集');
   const draft = state.drafts.find(d => d.configSetId === id), parsed = normalizeDraft(draft, config.type), digest = contentHash(config.type, parsed.data);
   const latest = state.versions.find(v => v.id === config.latestVersionId);
   if (latest?.contentHash === digest) return null;
   const version = { id: uuid(), configSetId: id, versionNumber: config.nextVersionNumber++, modelVersion: 1, rawInput: draft.rawInput, inputFormat: draft.inputFormat, options: structuredClone(draft.options), normalizedContent: parsed.data, contentHash: digest, itemMetadata: structuredClone(config.itemMetadata), source, note, createdAt: now(), restoredFromVersionId };
-  state.versions.push(version); config.latestVersionId = version.id; config.updatedAt = now(); config.revision++; draft.baseVersionId = version.id; return version;
+  if (context) Object.assign(version, {editedByUserId:draft.editedByUserId || null, editedByUsername:draft.editedByUsername || null, editedAt:draft.editedAt || null, submittedByUserId:context.user.id, submittedByUsername:context.user.username, submittedAt:context.time, createdAt:context.time, provenance:'local', editorProvenance:draft.provenance || 'unknown'});
+  state.versions.push(version); config.latestVersionId = version.id; config.updatedAt = context?.time || now();
+  // Online auto-archive derives a snapshot without changing the editable content.
+  // It must not invalidate a current editor; explicit commands still advance its revision.
+  if (!context || source !== 'auto') config.revision++;
+  draft.baseVersionId = version.id; return version;
 }
-export function restoreVersion(state, id, versionId) {
+export function restoreVersion(state, id, versionId, context) {
   const config = state.configs.find(c => c.id === id), target = state.versions.find(v => v.id === versionId && v.configSetId === id);
   if (!config || !target) throw Error('目标版本不存在');
   const latest = state.versions.find(v => v.id === config.latestVersionId), draft = state.drafts.find(d => d.configSetId === id);
   // Preserve the actual draft, including invalid or formatting-only edits.
   if (draft && (!latest || draft.rawInput !== latest.rawInput || draft.inputFormat !== latest.inputFormat)) state.recoveryDrafts.push({ ...structuredClone(draft), id: uuid(), reason: `恢复 v${target.versionNumber} 前的草稿`, createdAt: now() });
   if (latest?.contentHash === target.contentHash && draft?.rawInput === target.rawInput) return null;
-  saveDraft(state, id, makeDraft(target.rawInput, target.inputFormat, target.options));
+  saveDraft(state, id, makeDraft(target.rawInput, target.inputFormat, target.options), context);
   config.itemMetadata = structuredClone(target.itemMetadata || {});
-  return archiveVersion(state, id, 'restore', `恢复自 v${target.versionNumber}`, target.id);
+  return archiveVersion(state, id, 'restore', `恢复自 v${target.versionNumber}`, target.id, context);
 }
 export function shouldAutoArchive(state, id, lastEdit, clock = Date.now()) {
   const c = state.configs.find(x => x.id === id); if (!c || c.archivedAt || !state.settings.autoArchiveEnabled || clock - lastEdit < 2000) return false;
