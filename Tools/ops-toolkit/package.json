@@ -10,7 +10,7 @@
     "serve": "node serve.mjs",
     "start": "node server/start.mjs",
     "init-admin": "node server/init-admin.mjs",
-    "test:online": "node tests/online-browser.mjs"
+    "test:online": "node tests/manual-online-browser.mjs"
   },
   "dependencies": {
     "@noble/hashes": "2.4.0",

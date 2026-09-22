@@ -1,4 +1,4 @@
-export function mountIdentity({repo,ready,lost,notify}) {
+export function mountIdentity({repo,ready,lost,notify,beforeLeave=async()=>true}) {
   const $=id=>document.getElementById(id);
   const gate=document.createElement('section');gate.id='account-gate';gate.className='account-gate';
   gate.innerHTML=`<div class="account-card panel"><div class="eyebrow">OPS TOOLKIT · 团队工作空间</div><h1>登录运维工具箱</h1><p class="muted">使用管理员为你开通的账号访问配置与版本。</p>
@@ -37,9 +37,9 @@ export function mountIdentity({repo,ready,lost,notify}) {
     if($('new-password').value!==$('confirm-password').value)throw Error('两次新密码不一致');
     await repo.request('/password','POST',{oldPassword:$('old-password').value,password:$('new-password').value});repo.clear();message('密码已修改，请使用新密码登录。');
   });});
-  async function logout(){await repo.request('/logout','POST',{});repo.clear();}
+  async function logout(){if(!await beforeLeave())return;await repo.request('/logout','POST',{});repo.clear();}
   $('logout').onclick=()=>run($('logout'),logout);$('password-cancel').onclick=()=>run($('password-cancel'),logout);
-  $('change-password').onclick=()=>{gateMode(true);message('修改后全部旧会话会失效。');};
+  $('change-password').onclick=()=>run($('change-password'),async()=>{if(!await beforeLeave())return;gateMode(true);message('修改后全部旧会话会失效。');});
   async function refresh(){users=await repo.request('/users');renderUsers();}
   function renderUsers(){
     $('user-list').replaceChildren();

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { openDatabase, fail } from './database.js';
 import { Auth } from './auth.js';
 import { Workspace } from './workspace.js';
+import { decodeArchive } from '../src/archive.js';
 
 async function body(req, limit) {
   if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) fail(415,'请求必须使用 JSON');
@@ -11,6 +12,13 @@ async function body(req, limit) {
   for await(const chunk of req) {size+=chunk.length;if(size>limit)fail(413,'请求内容过大');chunks.push(chunk);}
   try {const data=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(!data||typeof data!=='object'||Array.isArray(data))throw Error();return data;}
   catch {fail(400,'JSON 请求格式错误');}
+}
+async function archiveBody(req) {
+  if(!/^(application\/json|application\/zip)(?:\s*;|$)/i.test(req.headers['content-type']||''))fail(415,'导入文件必须为 JSON 或 ZIP');
+  const limit=1024*1024*1024+1024*1024;
+  if(Number(req.headers['content-length'])>limit){req.resume();fail(413,'归档过大');}
+  const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>limit)fail(413,'归档过大');chunks.push(chunk);}
+  try{return decodeArchive(Buffer.concat(chunks));}catch{fail(400,'归档损坏或格式无效');}
 }
 export function createService({dbPath, origin, clock=Date.now}) {
   const db=openDatabase(dbPath),auth=new Auth(db,clock),workspace=new Workspace(db,clock), attempts=new Map();
@@ -52,8 +60,12 @@ export function createService({dbPath, origin, clock=Date.now}) {
       }
       const user=auth.requireUser(session.user.id);
       if(url.pathname==='/api/workspace'&&method==='GET') {send(200,workspace.read());return;}
+      if(url.pathname==='/api/environment-delete-preview'&&method==='GET') {send(200,workspace.environmentDeletePreview(user,{targetType:url.searchParams.get('targetType'),id:url.searchParams.get('id'),...(url.searchParams.get('kind')?{kind:url.searchParams.get('kind')}:{})}));return;}
       if(url.pathname==='/api/commands'&&method==='POST') {auth.requireUser(user.id,'write');const data=await body(req,22*1024*1024);auth.session(token);send(200,workspace.execute(user,data));return;}
+      if(url.pathname==='/api/import-archive'&&method==='POST') {auth.requireUser(user.id,'write');let copyMappings=[];try{if(url.searchParams.has('copyMappings'))copyMappings=JSON.parse(url.searchParams.get('copyMappings'));if(!Array.isArray(copyMappings))throw Error();}catch{fail(400,'副本映射参数无效');}const backup=await archiveBody(req);auth.session(token);send(200,workspace.execute(user,{type:'import',data:{backup,skipConflicts:url.searchParams.get('skipConflicts')==='true',importSettings:url.searchParams.get('importSettings')==='true',copyMappings}}));return;}
       if(url.pathname==='/api/backup'&&method==='GET') {send(200,workspace.backup(user,url.searchParams.get('id')||'',url.searchParams.get('redacted')==='true'));return;}
+      if(url.pathname==='/api/export'&&method==='GET') {send(200,workspace.export(user,{kind:url.searchParams.get('kind')||'versions',regionId:url.searchParams.get('regionId')||'',environmentTypeId:url.searchParams.get('environmentTypeId')||'',redacted:url.searchParams.get('redacted')==='true'}));return;}
+      if(url.pathname==='/api/legacy-export'&&method==='GET') {send(200,workspace.legacyExport(user));return;}
       if(url.pathname==='/api/users'&&method==='GET') {send(200,auth.list(user.id));return;}
       if(url.pathname==='/api/users'&&method==='POST') {
         auth.requireUser(user.id,'admin');const data=await body(req,16*1024);auth.session(token);send(201,await auth.createUser(user.id,data,()=>auth.session(token)));return;
@@ -67,7 +79,6 @@ export function createService({dbPath, origin, clock=Date.now}) {
       else res.end();
     }
   });
-  server.requestTimeout=30000;
-  const timer=setInterval(()=>{try{workspace.tick();}catch{console.error('自动归档失败，请检查数据目录及服务日志');}},1000);timer.unref();
-  return {server,auth,workspace,async close(){clearInterval(timer);await new Promise(r=>server.close(r));db.close();}};
+  server.requestTimeout=5*60*1000;
+  return {server,auth,workspace,async close(){await new Promise(r=>server.close(r));db.close();}};
 }

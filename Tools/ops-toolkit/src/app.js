@@ -146,7 +146,7 @@ function renderCertificates() {
       ['版本 / 序列号', `X.509 v${c.version}\n${c.serialNumber}`], ['主体 Subject', subject || '未提供'], ['签发者 Issuer', issuer || '未提供'],
       ['生效时间', `${c.notBefore}\n本地：${localTime(c.notBefore)}`], ['到期时间', `${c.notAfter}\n本地：${localTime(c.notAfter)}`],
       ['剩余时间', `${status.remainingDays.toFixed(2)} 天`], ['SAN', c.subjectAltName.length ? c.subjectAltName.map(x => `${x.type}: ${displayValue(x.value)}`).join('\n') : '未提供'],
-      ['签名算法', c.signatureAlgorithm], ['公钥', `${c.publicKeyAlgorithm}\n${c.publicKeyParameters}`], ['Key Usage', c.keyUsage.join(', ') || '未提供'], ['Extended Usage', c.extendedKeyUsage.join('\n') || '未提供'],
+      ['签名算法', c.signatureAlgorithm], ['签名参数', c.signatureParameters], ['公钥', `${c.publicKeyAlgorithm}\n${c.publicKeyParameters}`], ['Key Usage', c.keyUsage.join(', ') || '未提供'], ['Extended Usage', c.extendedKeyUsage.join('\n') || '未提供'],
       ['Basic Constraints', c.basicConstraints ? displayValue(c.basicConstraints) : '未提供'], ['SHA-256 指纹', c.sha256], ['扩展 OID', c.extensions.map(x => `${x.oid}${x.critical ? ' · critical' : ''}`).join('\n') || '未提供'],
     ];
     const list = el('dl', { class: 'cert-fields' });

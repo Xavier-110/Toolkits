@@ -23,6 +23,15 @@ test('validity boundaries are exact; day display rounding does not affect state'
   assert.equal(validity(start, end, 30, Date.parse(end)).status, '即将到期');
   assert.equal(validity(start, end, 30, Date.parse(end) + 1).status, '已过期');
 });
+
+test('RSA-PSS signature parameters and absent optional extensions survive parsing',async()=>{
+  const cert=new Certificate();cert.version=2;cert.serialNumber=new asn1js.Integer({value:43});
+  cert.subject.typesAndValues.push(new AttributeTypeAndValue({type:'2.5.4.3',value:new asn1js.Utf8String({value:'pss.example.test'})}));cert.issuer.typesAndValues=cert.subject.typesAndValues;
+  cert.notBefore.value=new Date('2026-01-01T00:00:00Z');cert.notAfter.value=new Date('2027-01-01T00:00:00Z');
+  const keys=await crypto.subtle.generateKey({name:'RSA-PSS',modulusLength:2048,publicExponent:Uint8Array.of(1,0,1),hash:'SHA-256'},true,['sign','verify']);
+  await cert.subjectPublicKeyInfo.importKey(keys.publicKey);await cert.sign(keys.privateKey,'SHA-256');const info=parseDER(new Uint8Array(cert.toSchema().toBER(false)));
+  assert.match(info.signatureAlgorithm,/RSA-PSS/);assert.match(info.signatureParameters,/Hash: SHA-256/);assert.match(info.signatureParameters,/Mask: MGF1/);assert.match(info.signatureParameters,/Salt length: 32/);assert.match(info.signatureParameters,/Trailer field: 1/);assert.deepEqual(info.subjectAltName,[]);assert.equal(info.basicConstraints,null);assert.deepEqual(info.warnings,[]);
+});
 test('mixed good and malformed PEM gives isolated per-item errors', async () => {
   const result = await parseCertificates(rootCertificates[0] + '\n-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----\n' + rootCertificates[1]);
   assert.equal(result.length, 3); assert.ok(result[0].data); assert.match(result[1].error, /Base64/); assert.ok(result[2].data);
