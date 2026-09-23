@@ -27,7 +27,7 @@ test('Unicode survives chunk boundaries and manifest records export counts', () 
 });
 
 test('real archive over 20 MiB has JSON record shards', () => {
-  const backup = { schemaVersion: 3, exportKind: 'configs', configs: Array.from({ length: 22 }, (_, i) => ({ id: `config-${i}`, jsonContent: 'x'.repeat(1000000) })) };
+  const backup = { schemaVersion: 4, exportKind: 'configs', versionTags:[{id:'tag-1',configSetId:'config-0',versionId:'v1',name:'release'}],versions:[{id:'v1',configSetId:'config-0'}], configs: Array.from({ length: 22 }, (_, i) => ({ id: `config-${i}`, jsonContent: 'x'.repeat(1000000) })) };
   const encoded = encodeArchive(backup);
   assert.equal(encoded.type, 'application/zip');
   assert.deepEqual(decodeArchive(encoded.bytes), backup);

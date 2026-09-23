@@ -8,7 +8,7 @@ export function mountIdentity({repo,ready,lost,notify,beforeLeave=async()=>true}
   const account=document.createElement('div');account.className='account-actions';
   account.innerHTML='<span id="account-name" class="pill"></span><button id="change-password">修改密码</button><button id="logout">退出</button>';
   document.querySelector('.header-actions').prepend(account);
-  const nav=document.createElement('button');nav.className='nav-item';nav.dataset.page='users';nav.textContent='♙ 用户管理';document.querySelector('nav').append(nav);
+  const nav=document.createElement('button');nav.className='nav-item';nav.dataset.page='users';nav.textContent='♙ 用户管理';const settingsNav=document.querySelector('[data-page="settings"]');if(settingsNav)settingsNav.before(nav);else document.querySelector('nav').append(nav);
   const page=document.createElement('section');page.className='page';page.id='page-users';page.hidden=true;
   page.innerHTML=`<div class="page-heading"><div><div class="eyebrow">ACCESS MANAGEMENT</div><h1>用户与权限</h1><p>创建白名单账号，分配角色，随时启用或停用访问权限。</p></div></div>
     <form id="user-form" class="panel toolbar"><label>用户名<input id="user-name" required pattern="[a-zA-Z0-9_.-]{3,64}" autocomplete="off"></label><label>初始密码<input id="user-password" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></label><label>角色<select id="user-role"><option value="readonly">readonly · 只读</option><option value="operate">operate · 操作</option><option value="admin">admin · 管理员</option></select></label><button id="user-create" class="primary">创建白名单用户</button></form>
@@ -61,6 +61,7 @@ export function mountIdentity({repo,ready,lost,notify,beforeLeave=async()=>true}
   $('user-form').onsubmit=e=>{e.preventDefault();run($('user-create'),async()=>{await repo.request('/users','POST',{username:$('user-name').value,password:$('user-password').value,role:$('user-role').value});$('user-form').reset();await refresh();notify('白名单用户已创建');});};
   for(const id of ['user-search','user-role-filter','user-status-filter'])$(id).addEventListener(id==='user-search'?'input':'change',renderUsers);
   $('users-refresh').onclick=()=>run($('users-refresh'),refresh);
+  window.opsRefreshUsers=refresh;
   nav.onclick=async()=>{try{await window.opsNavigate('users');await refresh();}catch(e){notify(e.message,true);}};
   async function check(){
     if(!repo.user||busy)return;

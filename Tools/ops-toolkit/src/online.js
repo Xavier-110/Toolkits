@@ -1,4 +1,9 @@
+import {renderSettingsPage,renderBackupManagement} from './online-admin.js';
+import {renderVersionsPage,comparisonNodes} from './online-versions.js';
+import {compareSnapshots} from './comparison.js';
 import {ApiRepository} from './api.js';
+import {readRoute,routeHash} from './online-navigation.js';
+import {renderConvertPage} from './online-convert.js';
 import {mountIdentity} from './identity.js';
 import {serialize,parseJSON,byteSize,diff} from './core.js';
 import {normalizeJSON,detectFormat,toggleFormat,fieldRows,descriptionIssues,validateDescriptions,snapshotHash,maskConfiguration,jsonFieldLocations} from './config-model.js';
@@ -35,18 +40,26 @@ async function leave(){
 }
 async function navigate(name,{guard=true,push=true}={}){
   if(!repo.user)return false;
-  if(name==='backup'&&!canWrite())throw Error('只读账号不能导入或导出');
+  if(['backup','users'].includes(name)&&repo.user.role!=='admin')throw Error('当前页面仅管理员可访问');
   if(name!==pageName&&guard&&!await leave())return false;
   if(name!==pageName){editor=null;await repo.reload();}
   pageName=name;
   document.querySelectorAll('.page').forEach(node=>node.hidden=node.id!==`page-${name}`);
   document.querySelectorAll('.nav-item').forEach(node=>node.classList.toggle('active',node.dataset.page===name));
-  $('crumb').textContent={convert:'JSON / YAML',cert:'证书解析',configs:'配置管理',versions:'版本归档',environments:'环境信息管理',backup:'数据备份',users:'用户管理'}[name];
+  $('crumb').textContent={convert:'JSON / YAML',cert:'证书解析',configs:'配置管理',versions:'版本归档',environments:'环境信息管理',backup:'数据备份',users:'用户管理',settings:'设置'}[name];
   if(push)history.pushState({page:name},'',`#${name}`);
-  render();return true;
+  render();if(name==='users')await window.opsRefreshUsers?.();return true;
 }
 window.opsNavigate=navigate;
-window.addEventListener('popstate',async()=>{const target=location.hash.slice(1)||'convert';try{if(!await navigate(target,{push:false}))history.pushState({page:pageName},'',`#${pageName}`);}catch(e){notify(e.message,true);}});
+function saveRoute(){
+  const values=pageName==='configs'?{...filters,id:editor?.id||''}:pageName==='versions'?{...exportFilters,id:historyId}:{};
+  history.replaceState({page:pageName},'',routeHash(pageName,values));
+}
+function restoreRoute(route){
+  if(route.page==='configs'){filters.regionId=route.regionId;filters.environmentTypeId=route.environmentTypeId;editor=config(route.id)?newEditor(config(route.id)):null;}
+  if(route.page==='versions'){exportFilters.regionId=route.regionId;exportFilters.environmentTypeId=route.environmentTypeId;exportFilters.configNameId=route.configNameId;historyId=config(route.id)?route.id:'';}
+}
+window.addEventListener('popstate',async()=>{try{if(!await leave()){saveRoute();return;}const route=readRoute(location.hash,repo.user?.role);await navigate(route.page,{push:false,guard:false});restoreRoute(route);render();if(route.denied||route.invalid)notify('页面不存在或当前账号无权访问，已返回转换页',true);}catch(e){notify(e.message,true);}});
 window.addEventListener('beforeunload',event=>{if(dirty()){event.preventDefault();event.returnValue='';}});
 document.querySelectorAll('[data-page]').forEach(node=>node.addEventListener('click',()=>navigate(node.dataset.page).catch(e=>notify(e.message,true))));
 function render(){
@@ -54,23 +67,16 @@ function render(){
   if(pageName==='configs')renderConfigs();
   if(pageName==='versions')renderVersions();
   if(pageName==='environments')renderEnvironmentPage({repo,notify,after:render});
-  if(pageName==='backup')renderBackup();
+  if(pageName==='backup'){renderBackup();renderBackupManagement({repo});}
   if(pageName==='cert')renderCertificatesPage({repo,canWrite});
+  if(pageName==='settings')renderSettingsPage({repo});
+  saveRoute();
 }
-function renderConvert(){
-  const input=el('textarea',{id:'convert-input',class:'code-editor',value:conversion,ariaLabel:'输入配置',spellcheck:false});
-  const status=el('div',{id:'convert-status',class:'notice',role:'status'}),format=el('span',{id:'detected-format',class:'pill'});
-  const update=()=>{conversion=input.value;conversionOutput=null;try{format.textContent=detectFormat(conversion).format.toUpperCase();status.textContent='自动识别；点击切换格式才转换文本。';}catch(e){format.textContent=conversion.trim()?'输入无效':'暂无内容';status.textContent=conversion.trim()?e.message:'粘贴 JSON 或 YAML 配置。';}};
-  input.addEventListener('input',update);update();
-  const sort=select('convert-sort',[{id:'none',label:'保持原序'},{id:'asc',label:'对象键升序'},{id:'desc',label:'对象键降序'}],'none',null);
-  const formatJSON=async()=>{const detected=detectFormat(input.value);if(detected.hasComments&&!await dialog('YAML 注释不会写入 JSON',[el('p',{text:'格式化将转换为 JSON 并移除原生注释；可取消并先保存说明。'})]))return;input.value=serialize(detected.data,sort.value);update();};
-  const toggle=async()=>{const result=toggleFormat(input.value);if(result.hasComments&&!await dialog('YAML 注释不会写入 JSON',[el('p',{text:'可取消并将注释复制到字段说明；继续会只保留配置值。'})]))return;conversionOutput=result;input.value=result.text;conversion=result.text;format.textContent=result.format.toUpperCase();status.textContent=result.warnings?.join('\n')||'切换成功，类型、结构和数组顺序已保留。';};
-  const save=async()=>{write();const detected=detectFormat(input.value);if(detected.hasComments&&!await dialog('保存时仅保留 JSON',[el('p',{text:'请将需要保留的 YAML 注释移入字段说明。是否继续？'})]))return;if(!await leave())return;await navigate('configs',{guard:false});editor=newEditor();editor.jsonContent=serialize(detected.data,'none');editor.lastValid=detected.data;editor.originalData=detected.data;renderConfigs();};
-  $('page-convert').replaceChildren(heading('JSON / YAML 自动切换','按当前格式自动选择转换方向，保存配置时统一为 JSON。'),panel(el('div',{class:'row'},format,label('对象排序',sort),button('加载示例',()=>{input.value='env:\n  - name: APP_NAME\n    value: demo\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: database\n        key: password\n';update();}),button('清空',()=>{input.value='';update();})),input,el('div',{class:'action-bar'},button('切换格式',toggle,'convert',{class:'primary'}),button('格式化 JSON',formatJSON),button('复制',()=>{detectFormat(input.value);return copy(input.value);}),...(canWrite()?[button('下载结果',()=>{const d=detectFormat(input.value);download(`config.${d.format}`,input.value,d.format==='yaml'?'text/yaml':'application/json');},'download-output'),button('保存配置项',save,'save-converted')]:[])),status));
-}
+function renderConvert(){renderConvertPage({value:conversion,canWrite,oninput:value=>{conversion=value;},save:async result=>{write();if(!await leave())return;await navigate('configs',{guard:false});editor=newEditor();editor.jsonContent=result.text;editor.lastValid=result.data;editor.originalData=result.data;renderConfigs();}});}
 async function selectConfig(id){if(!await leave())return;const c=config(id);editor=c?newEditor(c):null;renderConfigs();}
 async function startNew(source=null){write();if(!await leave())return;editor=newEditor();if(source){Object.assign(editor,{jsonContent:source.jsonContent,fieldDescriptions:structuredClone(source.fieldDescriptions),itemMetadata:structuredClone(source.itemMetadata),description:source.description,tags:[...source.tags],sourceConfigId:source.id});editor.originalData=normalizeJSON(editor.jsonContent).data;editor.lastValid=editor.originalData;}renderConfigs();}
 function renderConfigs(){
+  saveRoute();
   const region=select('project-filter',dictionaries().regions,filters.regionId,'全部 region'),type=select('env-filter',dictionaries().environmentTypes,filters.environmentTypeId,'全部环境类型'),search=el('input',{id:'config-search',value:filters.query,placeholder:'配置名称、字段、说明、标签'}),archived=el('input',{type:'checkbox',checked:filters.archived,id:'show-archived'});
   const changeFilter=async()=>{const next={regionId:region.value,environmentTypeId:type.value,query:search.value,archived:archived.checked};if(editor&&dirty()&&!await leave()){renderConfigs();return;}filters=next;editor=null;renderConfigs();};
   region.onchange=changeFilter;type.onchange=changeFilter;search.onchange=changeFilter;archived.onchange=changeFilter;
@@ -116,7 +122,7 @@ function visibleRows(e){return fieldRows(maskConfiguration(e.lastValid,e.itemMet
 function descriptionInput(e,row,writable){return el('textarea',{rows:2,maxLength:2000,value:e.fieldDescriptions[row.key]||'',readOnly:!writable,ariaLabel:`${row.path} 配置说明`,dataset:{descriptionKey:row.key},oninput:event=>{const text=event.target.value;if(text)e.fieldDescriptions[row.key]=text;else delete e.fieldDescriptions[row.key];markDirty();}});}
 function renderTable(body,e,writable){
   const search=el('input',{placeholder:'搜索字段名称或说明',value:e.search,oninput:event=>{e.search=event.target.value;draw();}}),table=el('table',{id:'config-table',class:'config-spreadsheet'}),tbody=el('tbody');table.append(el('thead',{},el('tr',{},...['配置名称','配置值','配置说明'].map(text=>el('th',{text})))),tbody);
-  function draw(){tbody.replaceChildren();for(const row of visibleRows(e)){if(!`${row.path} ${e.fieldDescriptions[row.key]||''}`.toLowerCase().includes(e.search.toLowerCase()))continue;if([...e.collapsed].some(key=>key!==row.key&&row.path.startsWith(key+'/')))continue;const container=row.value&&typeof row.value==='object';const name=el('span',{text:row.path});if(container)name.prepend(button(e.collapsed.has(row.key)?'＋':'−',()=>{e.collapsed.has(row.key)?e.collapsed.delete(row.key):e.collapsed.add(row.key);draw();},'',{ariaLabel:`展开或收起 ${row.path}`}));tbody.append(el('tr',{},el('td',{},name),el('td',{},el('small',{class:'muted',text:row.type}),pre(row.type==='reference'?serialize(row.value):container?Array.isArray(row.value)?`${row.value.length} 项`:`${Object.keys(row.value).length} 个字段`:JSON.stringify(row.value)??'缺省空值')),el('td',{},descriptionInput(e,row,writable))));}}
+  function draw(){tbody.replaceChildren();for(const row of visibleRows(e)){if(!`${row.path} ${e.fieldDescriptions[row.key]||''}`.toLowerCase().includes(e.search.toLowerCase()))continue;if([...e.collapsed].some(key=>key!==row.key&&row.path.startsWith(key+'/')))continue;const container=row.value&&typeof row.value==='object';const name=el('span',{text:row.name,title:row.path});if(row.path.split('/').length>2&&!row.key.startsWith('env:'))name.append(el('small',{class:'muted',text:' · '+row.path}));if(container)name.prepend(button(e.collapsed.has(row.key)?'＋':'−',()=>{e.collapsed.has(row.key)?e.collapsed.delete(row.key):e.collapsed.add(row.key);draw();},'',{ariaLabel:`展开或收起 ${row.path}`}));tbody.append(el('tr',{},el('td',{},name),el('td',{title:row.type},pre(row.type==='reference'?serialize(row.value):container?Array.isArray(row.value)?`${row.value.length} 项`:`${Object.keys(row.value).length} 个字段`:typeof row.value==='string'?(row.value||'（空字符串）'):JSON.stringify(row.value)??'缺省空值')),el('td',{},descriptionInput(e,row,writable))));}}
   body.append(search,el('div',{class:'table-scroll'},table));if(!visibleRows(e).length)body.append(el('p',{class:'notice',text:'当前 JSON 没有可填写说明的字段。'}),pre(serialize(maskConfiguration(e.lastValid,e.itemMetadata,e.reveal))));draw();
 }
 function renderDescriptions(host,e,writable){
@@ -150,28 +156,18 @@ async function exportDialog(kind,redacted=false){
   const refresh=async()=>{const token=++run;pkg=null;if($('confirm-ok'))$('confirm-ok').disabled=true;status.textContent='正在读取导出快照…';try{const next=await repo.request(`/export?kind=${kind}&regionId=${encodeURIComponent(scope.regionId)}&environmentTypeId=${encodeURIComponent(scope.environmentTypeId)}&redacted=${redacted}`);if(token!==run)return;pkg=next;status.textContent=`配置 ${pkg.counts.configs} 项，版本 ${pkg.counts.versions} 项，归档 ${pkg.counts.archived??pkg.configs.filter(c=>c.archivedAt).length} 项，待映射 ${pkg.counts.unmapped??repo.state.legacy?.length??0} 项。\n${pkg.configs.length?'导出全部匹配记录，不受分页或搜索限制。':'没有匹配的可导出记录。'}\n${redacted?'脱敏包不能恢复。':'文件包含配置原值，请妥善保管。'}`;if($('confirm-ok'))$('confirm-ok').disabled=!pkg.configs.length;}catch(error){if(token===run)status.textContent=error.message;}};
   await refresh();const answer=dialog(redacted?'下载脱敏分享':'确认导出完整原值',[environmentFilters('export',refresh,scope),status]);$('confirm-ok').disabled=!pkg?.configs.length;if(!await answer||!pkg)return;run++;const archive=encodeArchive(pkg);download(`ops-toolkit-${kind}.${archive.type==='application/zip'?'zip':'json'}`,archive.bytes,archive.type);
 }
-function comparison(a,b,reveal){
-  const left=normalizeJSON(a.jsonContent),right=normalizeJSON(b.jsonContent),metadata={};for(const source of [a.itemMetadata,b.itemMetadata])for(const [key,value]of Object.entries(source||{}))metadata[key]=metadata[key]===true||value;
-  const aa=maskConfiguration(left.data,metadata,reveal),bb=maskConfiguration(right.data,metadata,reveal),env=left.kind==='k8s-env'&&right.kind==='k8s-env';
-  return [el('div',{class:'editor-grid'},el('div',{},pre(authors(a)),pre(serialize(aa))),el('div',{},pre(b.current?`当前未保存编辑 · ${repo.user.username}`:authors(b)),pre(serialize(bb)))),el('h3',{text:'内容变化'}),pre(serialize(diff(env?(Array.isArray(aa)?aa:aa.env):aa,env?(Array.isArray(bb)?bb:bb.env):bb,env?'k8s-env':'json',{},true))),el('h3',{text:'说明变化'}),pre(serialize(diff(a.fieldDescriptions,b.fieldDescriptions,'json',{},true)))];
-}
+function comparison(a,b,reveal){return [...(b.current?[el('p',{text:'当前未保存编辑 · '+repo.user.username})]:[]),...comparisonNodes(compareSnapshots(a,b,{reveal,generatedBy:repo.user.username}))];}
 async function compareEditor(e){
   normalizeJSON(e.jsonContent);const versions=repo.state.versions.filter(v=>v.configSetId===e.id).sort((a,b)=>b.versionNumber-a.versionNumber),choice=select('editor-diff-version',versions.map(v=>({id:v.id,label:`v${v.versionNumber}`})),versions[0]?.id,null),reveal=el('input',{type:'checkbox',id:'editor-diff-reveal'}),result=el('div');
   const draw=()=>{const version=versions.find(v=>v.id===choice.value);if(version)result.replaceChildren(...comparison(version,{...e,current:true},reveal.checked));};choice.onchange=draw;reveal.onchange=draw;draw();await dialog('历史与当前编辑比较',[label('历史版本',choice),label('显示敏感内容',reveal),result],[{id:'confirm-ok',text:'返回编辑',value:true}]);
 }
-function renderVersions(){
-  const visible=repo.state.configs.filter(c=>(!exportFilters.regionId||c.regionId===exportFilters.regionId)&&(!exportFilters.environmentTypeId||c.environmentTypeId===exportFilters.environmentTypeId));
-  const chooser=select('history-config',visible.map(c=>({id:c.id,label:configLabel(c)})),historyId,'选择配置集');chooser.onchange=()=>{historyId=chooser.value;renderVersions();};
-  const versions=repo.state.versions.filter(v=>v.configSetId===historyId).sort((a,b)=>b.versionNumber-a.versionNumber),list=el('div',{id:'version-list',class:'panel timeline'});
-  for(const version of versions){const card=el('div',{class:'version-entry'},el('h3',{text:`v${version.versionNumber} · ${version.note||version.source}`}),el('p',{class:'authorship',text:authors(version)}));if(canWrite())card.append(button('恢复此版本',async()=>{if(!await leave())return;await navigate('configs',{guard:false});editor=newEditor(config(version.configSetId));Object.assign(editor,{jsonContent:version.jsonContent,fieldDescriptions:structuredClone(version.fieldDescriptions),itemMetadata:structuredClone(version.itemMetadata),description:version.description||'',tags:[...(version.tags||[])],restoredFromVersionId:version.id,mode:'edit'});editor.lastValid=normalizeJSON(version.jsonContent).data;editor.originalData=editor.lastValid;renderConfigs();notify('历史内容已载入，尚未保存。');},'',{dataset:{restore:version.id}}));list.append(card);}
-  const left=select('diff-left',versions.map(v=>({id:v.id,label:`v${v.versionNumber}`})),versions[1]?.id||versions[0]?.id,null),right=select('diff-right',versions.map(v=>({id:v.id,label:`v${v.versionNumber}`})),versions[0]?.id,null),reveal=el('input',{id:'diff-reveal',type:'checkbox'}),result=el('div',{id:'diff-results'});
-  const compare=()=>{const a=versions.find(v=>v.id===left.value),b=versions.find(v=>v.id===right.value);if(a&&b)result.replaceChildren(...comparison(a,b,reveal.checked));};
-  $('page-versions').replaceChildren(heading('版本归档','历史不可变；恢复先载入编辑器，保存版本后才正式提交。',...(canWrite()?[button('按环境导出版本',()=>exportDialog('versions'),'export-versions')]:[])),panel(environmentFilters('history',()=>{historyId='';renderVersions();}),label('配置集',chooser),...(canWrite()?[button('清理旧版本',async()=>{const choices=versions.filter(v=>v.id!==config(historyId)?.latestVersionId).map(v=>({v,input:el('input',{type:'checkbox'})}));if(!choices.length)return notify('没有可清理的旧版本');if(!await dialog('选择要清理的旧版本',choices.map(({v,input})=>label(`v${v.versionNumber} · ${time(v.createdAt)}`,input))))return;const ids=choices.filter(x=>x.input.checked).map(x=>x.v.id);if(!ids.length)return;if(!await dialog('再次确认清理',[el('p',{text:`将永久清理 ${ids.length} 个旧版本，最新版本保留。`})]))return;await repo.command({type:'clean',id:historyId,data:{versionIds:ids}});renderVersions();},'clean-history')]:[])),el('div',{class:'history-layout'},list,panel(el('div',{class:'row'},label('左侧',left),label('右侧',right),label('显示敏感内容',reveal),button('比较',compare,'compare-versions')),result)));compare();
-}
+function renderVersions(){renderVersionsPage({repo,filters:exportFilters,historyId,setHistoryId:id=>{historyId=id;},canWrite,configLabel,exportDialog,redraw:renderVersions,saveRoute,restoreVersion:async version=>{
+  if(!await leave())return;await navigate('configs',{guard:false});editor=newEditor(config(version.configSetId));Object.assign(editor,{jsonContent:version.jsonContent,fieldDescriptions:structuredClone(version.fieldDescriptions),itemMetadata:structuredClone(version.itemMetadata),description:version.description||'',tags:[...(version.tags||[])],restoredFromVersionId:version.id,mode:'edit'});editor.lastValid=normalizeJSON(version.jsonContent).data;editor.originalData=editor.lastValid;renderConfigs();notify('历史内容已载入，尚未保存。');
+}});}
 function renderBackup(){
   const mappings=el('div',{id:'import-mappings'}),conflicts=el('div',{id:'import-conflicts'});
   const mappingChoices=[];
-  const showMappings=backup=>{mappingChoices.length=0;mappings.replaceChildren();conflicts.replaceChildren();if(backup.schemaVersion!==3)return;for(const row of backup.configs||[]){const conflict=repo.state.configs.find(c=>sameIdentity(c,row));if(conflict)conflicts.append(el('p',{text:`同名冲突：${configLabel(conflict)}；默认拒绝，可整项跳过或选择副本目标。`}));const enabled=el('input',{type:'checkbox'}),identity={regionId:'',environmentTypeId:'',configNameId:''},choices=identitySelects(repo,identity,()=>{},`import-${row.id}`);choices.hidden=true;enabled.onchange=()=>{choices.hidden=!enabled.checked;};mappings.append(el('details',{},el('summary',{text:`配置 ${row.id}：导入为副本（可选）`}),label('选择新三项身份',enabled),choices));mappingChoices.push({row,enabled,identity});}};
+  const showMappings=backup=>{mappingChoices.length=0;mappings.replaceChildren();conflicts.replaceChildren();if(![3,4].includes(backup.schemaVersion))return;for(const row of backup.configs||[]){const conflict=repo.state.configs.find(c=>sameIdentity(c,row));if(conflict)conflicts.append(el('p',{text:`同名冲突：${configLabel(conflict)}；默认拒绝，可整项跳过或选择副本目标。`}));const enabled=el('input',{type:'checkbox'}),identity={regionId:'',environmentTypeId:'',configNameId:''},choices=identitySelects(repo,identity,()=>{},`import-${row.id}`);choices.hidden=true;enabled.onchange=()=>{choices.hidden=!enabled.checked;};mappings.append(el('details',{},el('summary',{text:`配置 ${row.id}：导入为副本（可选）`}),label('选择新三项身份',enabled),choices));mappingChoices.push({row,enabled,identity});}};
   const file=el('input',{type:'file',id:'backup-file',accept:'.json,.zip,application/json,application/zip'}),preview=el('div',{id:'import-preview',class:'notice',text:importData?`已读取 ${importData.name}，请确认预览后导入。`:'选择 JSON／ZIP 完整备份。旧 v1/v2 导入后需管理员映射环境。'}),skip=el('input',{type:'checkbox',id:'skip-conflicts'}),settings=el('input',{type:'checkbox',id:'import-settings'});
   const submit=button('确认导入',async()=>{write();if(!importData)return;const saved=importData,generation=repo.generation,copyMappings=mappingChoices.filter(x=>x.enabled.checked).map(x=>({configId:x.row.id,...x.identity}));if(copyMappings.some(x=>!x.regionId||!x.environmentTypeId||!x.configNameId))throw Error('请完整选择每个副本的三项身份');if(!await dialog('确认导入备份',[el('p',{text:`${saved.name}，冲突${skip.checked?'整项跳过':'阻止导入'}，${copyMappings.length} 项导入副本。历史作者标记为未验证。`})]))return;const response=await fetch(`/api/import-archive?skipConflicts=${skip.checked}&importSettings=${settings.checked}&copyMappings=${encodeURIComponent(JSON.stringify(copyMappings))}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':saved.type,'X-CSRF-Token':repo.csrf},body:saved.bytes});const value=await response.json();if(generation!==repo.generation)return;if(!response.ok){if(response.status===401)repo.clear('expired');throw Error(value.error);}repo.state=value.state;importData=null;renderBackup();notify('导入完成');},'import-backup',{disabled:!importData,class:'primary'});
   file.onchange=async()=>{const selected=file.files[0];if(!selected)return;const run=++fileRun,generation=repo.generation;try{if(selected.size>1024**3)throw Error('备份超过1GiB导入上限');const bytes=new Uint8Array(await selected.arrayBuffer());if(run!==fileRun||generation!==repo.generation)return;const backup=decodeArchive(bytes);if(![1,2,3].includes(backup.schemaVersion)||backup.redacted)throw Error('不支持此备份或脱敏包不可恢复');importData={name:selected.name,bytes,backup,type:selected.name.endsWith('.zip')?'application/zip':'application/json'};preview.textContent=`格式 v${backup.schemaVersion}，配置 ${(backup.configs||backup.workspace?.configs||[]).length} 项、版本 ${(backup.versions||backup.workspace?.versions||[]).length} 项。提交时服务端将完整校验。`;showMappings(backup);submit.disabled=false;}catch(e){importData=null;submit.disabled=true;preview.textContent=e.message;notify(e.message,true);}};
@@ -182,5 +178,9 @@ function renderBackup(){
 }
 $('theme-toggle').onclick=()=>{document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';try{localStorage.setItem('ops-theme',document.documentElement.dataset.theme);}catch{}};
 try{document.documentElement.dataset.theme=localStorage.getItem('ops-theme')||'dark';}catch{}
-$('settings-open').onclick=async()=>{try{write();const days=el('input',{type:'number',min:0,max:3650,value:repo.state.settings.expiryWarningDays});if(await dialog('证书有效期预警设置',[label('提前预警天数',days)])){await repo.command({type:'settings',data:{expiryWarningDays:Number(days.value)}});notify('设置已更新');}}catch(e){notify(e.message,true);}};
-mountIdentity({repo,notify,beforeLeave:leave,ready:async()=>{pageName='convert';if(held&&held.userId===repo.user.id&&canWrite()){editor=held.editor;pageName='configs';}held=null;history.replaceState({page:pageName},'',`#${pageName}`);document.querySelectorAll('.page').forEach(n=>n.hidden=n.id!==`page-${pageName}`);render();},lost:(reason,user)=>{if(reason==='expired'&&dirty()&&user)held={userId:user.id,editor};else held=null;editor=null;conversion='';conversionOutput=null;importData=null;fileRun++;clearCertificates();document.querySelectorAll('.page:not(#page-users)').forEach(n=>n.replaceChildren());if($('confirm-dialog').open)$('confirm-dialog').close();}});
+mountIdentity({repo,notify,beforeLeave:leave,ready:async()=>{
+  const route=readRoute(location.hash,repo.user.role),resume=held&&held.userId===repo.user.id&&canWrite()?held.editor:null;held=null;
+  document.querySelector('[data-page="backup"]').hidden=repo.user.role!=='admin';
+  await navigate(resume?'configs':route.page,{guard:false,push:false});if(resume)editor=resume;else restoreRoute(route);render();
+  if(route.denied||route.invalid)notify('页面不存在或当前账号无权访问，已返回转换页',true);
+},lost:(reason,user)=>{if(reason==='expired'&&dirty()&&user)held={userId:user.id,editor};else held=null;editor=null;conversion='';conversionOutput=null;importData=null;fileRun++;clearCertificates();document.querySelectorAll('.page:not(#page-users)').forEach(n=>n.replaceChildren());if($('confirm-dialog').open)$('confirm-dialog').close();}});

@@ -10,11 +10,17 @@
     "serve": "node serve.mjs",
     "start": "node server/start.mjs",
     "init-admin": "node server/init-admin.mjs",
-    "test:online": "node tests/manual-online-browser.mjs"
+    "test:online": "node tests/manual-online-browser.mjs",
+    "test:management": "node tests/version-management-browser.mjs",
+    "test:databases": "node tests/database-integration.mjs",
+    "restore-system": "node server/restore-backup.mjs"
   },
   "dependencies": {
     "@noble/hashes": "2.4.0",
     "asn1js": "3.0.10",
+    "mysql2": "3.24.4",
+    "oracledb": "7.0.1",
+    "pg": "8.23.0",
     "pkijs": "3.4.0",
     "yaml": "2.9.1"
   },

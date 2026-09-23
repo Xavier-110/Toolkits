@@ -45,7 +45,7 @@ test('dictionary is admin-only and disabled bindings prevent writes',t=>{
 });
 test('schema one state is retained as unmapped legacy',t=>{
   const {db,ws}=fixture(t);db.prepare('UPDATE workspace SET data=? WHERE id=1').run(JSON.stringify({schemaVersion:1,revision:5,projects:[],environments:[],configs:[],versions:[],drafts:[],recoveryDrafts:[],settings:{theme:'dark'}}));
-  const state=ws.read();assert.equal(state.schemaVersion,3);assert.equal(state.legacy.length,0);assert.equal(state.configs.length,0);
+  const state=ws.read();assert.equal(state.schemaVersion,4);assert.equal(state.legacy.length,0);assert.equal(state.configs.length,0);
 });
 test('v1 import keeps individual histories unmapped, then maps IDs and recovery drafts',t=>{
   const {ws,run,data}=fixture(t),old=emptyState();
