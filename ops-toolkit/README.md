@@ -19,6 +19,27 @@ npm.cmd start
 
 默认监听 `127.0.0.1:4173`，按 Ctrl+C 停止。
 
+## 一键生成发布包
+
+在开发目录安装依赖后，核对 `package.json` 的 `version`，然后运行：
+
+```powershell
+npm.cmd run release
+```
+
+脚本先运行项目单元测试并重新构建单文件 HTML，再压缩项目服务端代码、安装生产依赖，生成 `dist/ops-toolkit-v<version>.zip` 和同名 `.sha256` 校验文件。可运行 `npm.cmd run test:release` 对临时发布包执行解压、文件边界和服务启动检查。已有同版本产物时脚本会报错，不覆盖发布包。需要指定输出目录时使用 `npm.cmd run release -- --output E:\Releases`。
+
+发布包可在 Windows 或 Linux 使用，需要目标机器安装 Node.js 24 或更新版本。Windows 解压后，在 `ops-toolkit` 子目录先运行 `init-admin.cmd` 创建管理员，再运行 `start.cmd`。Linux 解压后，在同一目录运行：
+
+```bash
+bash start-linux.sh init  # 首次使用，交互创建管理员
+bash start-linux.sh       # 启动服务
+```
+
+Linux 脚本首次运行会通过 `npm ci --omit=dev` 重新安装适用于当前 Linux 架构的生产依赖；以后仅当锁文件或架构变化时重装。启动后通过 `http://127.0.0.1:4173/` 使用页面。生成的 `ops_toolkit_online.html` 不支持 `file://` 双击直接使用；登录、配置和版本依赖同包服务。升级已有实例前先停服并备份原数据目录，继续使用原 `OPS_TOOLKIT_DB` 路径。发布包不包含 `data/`、数据库、密钥或账号。
+
+前端和项目服务端代码已压缩，且发布包不附带源码映射；这些措施只能增加阅读和还原成本，无法防止浏览器或本机运行代码被分析。第三方依赖及许可证按发布要求保留。
+
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `OPS_TOOLKIT_PORT` | `4173` | HTTP 端口 |
