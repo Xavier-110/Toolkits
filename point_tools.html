@@ -1,0 +1,1135 @@
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>在线检测可视化 · Pointer API Client</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #161922;
+        --panel2: #1d2130;
+        --border: #2a2f40;
+        --text: #e5e7eb;
+        --muted: #8b93a7;
+        --accent: #38bdf8;
+        --hand: #38bdf8;
+        --point: #f59e0b;
+        --finger: #ef4444;
+        --kpt: #fde047;
+        --skel: rgba(56, 189, 248, 0.55);
+        --ok: #22c55e;
+        --warn: #f59e0b;
+        --err: #ef4444;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font:
+          13px/1.55 -apple-system,
+          "Segoe UI",
+          "Microsoft YaHei",
+          Roboto,
+          sans-serif;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+      }
+      header h1 {
+        font-size: 15px;
+        margin: 0;
+        font-weight: 600;
+      }
+      header .sub {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      .sidebar {
+        width: 390px;
+        min-width: 390px;
+        background: var(--panel);
+        border-right: 1px solid var(--border);
+        overflow-y: auto;
+        padding: 12px;
+      }
+      .sidebar section {
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 12px;
+      }
+      .sidebar h2 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 600;
+      }
+      label.lbl {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      input[type="text"] {
+        width: 100%;
+        background: #0b0d12;
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 9px;
+        font:
+          12px/1.4 "JetBrains Mono",
+          "Consolas",
+          monospace;
+      }
+      input[type="text"]:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .curl {
+        margin-top: 6px;
+        font:
+          11px/1.4 "JetBrains Mono",
+          "Consolas",
+          monospace;
+        color: var(--muted);
+        word-break: break-all;
+        background: #0b0d12;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 8px;
+      }
+      .curl b {
+        color: var(--accent);
+      }
+      .drop {
+        border: 1.5px dashed var(--border);
+        border-radius: 8px;
+        padding: 18px 10px;
+        text-align: center;
+        color: var(--muted);
+        cursor: pointer;
+        transition: 0.15s;
+      }
+      .drop:hover,
+      .drop.over {
+        border-color: var(--accent);
+        color: var(--text);
+        background: rgba(56, 189, 248, 0.06);
+      }
+      .drop .big {
+        font-size: 22px;
+        display: block;
+        margin-bottom: 4px;
+      }
+      .drop small {
+        font-size: 11px;
+      }
+      input[type="file"] {
+        display: none;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      button {
+        background: var(--panel2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 12px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: 0.15s;
+      }
+      button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      button.primary {
+        background: var(--accent);
+        color: #06121a;
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+      button.primary:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .spinner {
+        width: 13px;
+        height: 13px;
+        border: 2px solid #06121a30;
+        border-top-color: #06121a;
+        border-radius: 50%;
+        display: inline-block;
+        vertical-align: -2px;
+        animation: spin 0.7s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .status {
+        font-size: 12px;
+        margin-top: 8px;
+        min-height: 18px;
+        padding: 6px 9px;
+        border-radius: 6px;
+      }
+      .status.ok {
+        background: rgba(34, 197, 94, 0.1);
+        color: var(--ok);
+      }
+      .status.warn {
+        background: rgba(245, 158, 11, 0.1);
+        color: var(--warn);
+      }
+      .status.err {
+        background: rgba(239, 68, 68, 0.1);
+        color: var(--err);
+        white-space: pre-wrap;
+      }
+      details pre {
+        margin: 6px 0 0;
+        background: #0b0d12;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px;
+        font:
+          10px/1.4 "JetBrains Mono",
+          "Consolas",
+          monospace;
+        color: #9ca3af;
+        max-height: 200px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .chk {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 4px 0;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .chk input {
+        margin: 0;
+      }
+      .swatch {
+        width: 11px;
+        height: 11px;
+        border-radius: 2px;
+        display: inline-block;
+        flex: 0 0 auto;
+      }
+      .info {
+        font-size: 12px;
+      }
+      .info .grid2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px 12px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 1px 7px;
+        border-radius: 10px;
+        font-size: 11px;
+        background: rgba(56, 189, 248, 0.15);
+        color: var(--accent);
+      }
+      .timing td:last-child {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: var(--accent);
+      }
+      .timing {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .timing td {
+        padding: 2px 4px;
+      }
+      .timing td:first-child {
+        color: var(--muted);
+      } /* 时延分析 */
+      .lat-card {
+        background: #0b0d12;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .lat-head {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+      .lat-num {
+        font-size: 30px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+      }
+      .lat-unit {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .lat-judge {
+        font-size: 11px;
+        padding: 1px 8px;
+        border-radius: 10px;
+        margin-left: auto;
+      }
+      .lat-num.ok,
+      .lat-judge.ok {
+        color: var(--ok);
+      }
+      .lat-judge.ok {
+        background: rgba(34, 197, 94, 0.15);
+      }
+      .lat-num.warn,
+      .lat-judge.warn {
+        color: var(--warn);
+      }
+      .lat-judge.warn {
+        background: rgba(245, 158, 11, 0.15);
+      }
+      .lat-num.err,
+      .lat-judge.err {
+        color: var(--err);
+      }
+      .lat-judge.err {
+        background: rgba(239, 68, 68, 0.15);
+      }
+      .lat-sub {
+        font-size: 11px;
+        color: var(--muted);
+        margin: 5px 0 9px;
+      }
+      .lat-bar {
+        display: flex;
+        height: 10px;
+        border-radius: 5px;
+        overflow: hidden;
+        background: #0b0d12;
+        border: 1px solid var(--border);
+      }
+      .lat-seg {
+        height: 100%;
+      }
+      .lat-seg.server {
+        background: var(--accent);
+      }
+      .lat-seg.net {
+        background: var(--warn);
+      }
+      .lat-legend {
+        display: flex;
+        gap: 16px;
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .lat-tbl {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+        font-size: 12px;
+      }
+      .lat-tbl td {
+        padding: 1px 4px;
+      }
+      .lat-tbl td:first-child {
+        color: var(--muted);
+      }
+      .lat-tbl td:last-child {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .lat-hist {
+        margin-top: 8px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .lat-bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        height: 36px;
+        margin-top: 6px;
+      }
+      .lat-bars .bar {
+        width: 12px;
+        border-radius: 2px;
+        display: inline-block;
+        min-height: 3px;
+      }
+      .lat-bars .bar.ok {
+        background: var(--ok);
+      }
+      .lat-bars .bar.warn {
+        background: var(--warn);
+      }
+      .lat-bars .bar.err {
+        background: var(--err);
+      }
+      .viewport {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        background: #0a0c10;
+        background-image:
+          linear-gradient(
+            45deg,
+            #10131b 25%,
+            transparent 25%,
+            transparent 75%,
+            #10131b 75%
+          ),
+          linear-gradient(
+            45deg,
+            #10131b 25%,
+            transparent 25%,
+            transparent 75%,
+            #10131b 75%
+          );
+        background-size: 22px 22px;
+        background-position:
+          0 0,
+          11px 11px;
+        cursor: grab;
+      }
+      .viewport.panning {
+        cursor: grabbing;
+      }
+      .stage {
+        position: absolute;
+        top: 0;
+        left: 0;
+        transform-origin: 0 0;
+        will-change: transform;
+      }
+      .stage img {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .stage svg {
+        position: absolute;
+        top: 0;
+        left: 0;
+        overflow: visible;
+        width: 100%;
+        height: 100%;
+      }
+      .vp-hint {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        font-size: 13px;
+        pointer-events: none;
+        text-align: center;
+        line-height: 1.8;
+      }
+      .vp-hint b {
+        color: var(--text);
+        display: block;
+        font-size: 15px;
+      }
+      .vp-bar {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        background: rgba(15, 17, 21, 0.8);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 5px 8px;
+        font-size: 12px;
+        backdrop-filter: blur(4px);
+      }
+      .vp-bar button {
+        padding: 3px 8px;
+      }
+      #zoomVal {
+        min-width: 42px;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+        color: var(--accent);
+      }
+      #tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(15, 17, 21, 0.92);
+        border: 1px solid var(--accent);
+        color: var(--text);
+        padding: 4px 8px;
+        border-radius: 5px;
+        font:
+          11px/1.4 "JetBrains Mono",
+          "Consolas",
+          monospace;
+        display: none;
+        z-index: 5;
+        white-space: nowrap;
+      }
+      rect.box {
+        fill: none;
+        stroke-width: 2.5;
+        vector-effect: non-scaling-stroke;
+      }
+      line.skel {
+        stroke: var(--skel);
+        stroke-width: 2;
+        vector-effect: non-scaling-stroke;
+      }
+      circle.kpt {
+        fill: var(--kpt);
+        stroke: #000;
+        stroke-width: 1;
+        vector-effect: non-scaling-stroke;
+      }
+      circle.finger {
+        fill: var(--finger);
+        stroke: #fff;
+        stroke-width: 1.5;
+        vector-effect: non-scaling-stroke;
+      }
+      circle.ring {
+        fill: none;
+        stroke: var(--finger);
+        stroke-width: 2;
+        vector-effect: non-scaling-stroke;
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: pulse 1.6s ease-out infinite;
+      }
+      @keyframes pulse {
+        0% {
+          opacity: 0.9;
+          transform: scale(1);
+        }
+        100% {
+          opacity: 0;
+          transform: scale(2.2);
+        }
+      }
+      text.num {
+        fill: #0b0d12;
+        font-weight: 700;
+        text-anchor: middle;
+        dominant-baseline: central;
+      }
+      text.tag {
+        font-weight: 600;
+        dominant-baseline: alphabetic;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>🌐 Pointer API 在线检测可视化</h1>
+      <span class="sub"
+        >输入服务地址 + 上传图片 → 调用接口 → 原图叠加手部框 / 指向框 / 21关键点
+        / 食指指尖</span
+      >
+    </header>
+    <main>
+      <aside class="sidebar">
+        <section>
+          <h2>1 · 服务地址</h2>
+          <label class="lbl">API Endpoint (POST, multipart/form-data)</label>
+          <input
+            type="text"
+            id="url"
+            value="http://localhost:8000/api/v1/detect"
+            spellcheck="false"
+          />
+          <div class="curl" id="curlHint"></div>
+          <div class="row">
+            <label class="chk" style="margin: 0"
+              ><input
+                type="checkbox"
+                id="autoCall"
+                checked
+              />上传后自动调用</label
+            >
+          </div>
+        </section>
+        <section>
+          <h2>2 · 上传图片</h2>
+          <div class="drop" id="drop">
+            <span class="big">🖼</span>
+            <div>点击选择 或 拖拽图片到此处</div>
+            <small>jpg / png / webp · 即送检的原始图片</small>
+          </div>
+          <input type="file" id="fileInput" accept="image/*" />
+          <div class="row">
+            <button class="primary" id="callBtn" disabled>🚀 调用解析</button>
+            <span
+              class="sub"
+              id="imgMeta"
+              style="color: var(--muted); font-size: 11px"
+            ></span>
+          </div>
+          <div class="status" id="status"></div>
+        </section>
+        <section>
+          <h2>3 · 时延分析</h2>
+          <div class="lat-card" id="latencyBox">
+            <span style="color: var(--muted)">调用后显示端到端耗时</span>
+          </div>
+        </section>
+        <section>
+          <h2>4 · 响应结果</h2>
+          <details>
+            <summary
+              style="cursor: pointer; color: var(--muted); font-size: 12px"
+            >
+              查看原始 JSON
+            </summary>
+            <pre id="respJson">（等待调用）</pre>
+          </details>
+        </section>
+        <section>
+          <h2>5 · 图层开关</h2>
+          <label class="chk"
+            ><input type="checkbox" id="Lhand" checked /><span
+              class="swatch"
+              style="background: var(--hand)"
+            ></span
+            >手部框 hand_bbox</label
+          >
+          <label class="chk"
+            ><input type="checkbox" id="Lpoint" checked /><span
+              class="swatch"
+              style="background: var(--point)"
+            ></span
+            >指向框 pointing_bbox</label
+          >
+          <label class="chk"
+            ><input type="checkbox" id="Lkpt" checked /><span
+              class="swatch"
+              style="background: var(--kpt)"
+            ></span
+            >21 关键点 hand_points</label
+          >
+          <label class="chk"
+            ><input type="checkbox" id="Lskel" checked /><span
+              class="swatch"
+              style="background: var(--skel)"
+            ></span
+            >骨骼连线 skeleton</label
+          >
+          <label class="chk"
+            ><input type="checkbox" id="Lfinger" checked /><span
+              class="swatch"
+              style="background: var(--finger)"
+            ></span
+            >食指指尖 forefinger</label
+          >
+          <label class="chk"
+            ><input type="checkbox" id="Lnum" />关键点编号 0–20</label
+          >
+        </section>
+        <section class="info">
+          <h2>6 · 检测信息</h2>
+          <div id="infoPanel">
+            <span style="color: var(--muted)">调用后显示</span>
+          </div>
+        </section>
+      </aside>
+      <section class="viewport" id="vp">
+        <div class="vp-hint" id="hint">
+          <div><b>上传图片并调用服务</b>滚轮缩放 · 拖拽平移 · 双击复位</div>
+        </div>
+        <div class="stage" id="stage" style="display: none">
+          <img id="img" alt="" />
+          <svg id="overlay" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="vp-bar">
+          <button id="resetBtn" title="复位视图">⤢ 复位</button>
+          <span id="zoomVal">100%</span>
+        </div>
+        <div id="tooltip"></div>
+      </section>
+    </main>
+    <script>
+      // MediaPipe 21点骨骼连接（hand_points[8]=食指指尖，对齐 pipeline.py:1269）
+      const SKELETON = [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [0, 5],
+        [5, 6],
+        [6, 7],
+        [7, 8],
+        [5, 9],
+        [9, 10],
+        [10, 11],
+        [11, 12],
+        [9, 13],
+        [13, 14],
+        [14, 15],
+        [15, 16],
+        [13, 17],
+        [17, 18],
+        [18, 19],
+        [19, 20],
+        [0, 17],
+      ];
+      const HAND_STATE = { "-1": "无手", 0: "静止", 1: "指向", 2: "握持" };
+      const $ = (id) => document.getElementById(id);
+      const vp = $("vp"),
+        stage = $("stage"),
+        img = $("img"),
+        svg = $("overlay");
+      const drop = $("drop"),
+        fileInput = $("fileInput"),
+        urlInp = $("url");
+      const callBtn = $("callBtn"),
+        statusEl = $("status"),
+        hint = $("hint");
+      const info = $("infoPanel"),
+        tip = $("tooltip"),
+        respJson = $("respJson"),
+        latBox = $("latencyBox");
+      let natW = 0,
+        natH = 0,
+        dW = 0,
+        dH = 0; // 上传图尺寸 / 检测原图尺寸
+      let fitScale = 1,
+        zoom = 1,
+        panX = 0,
+        panY = 0;
+      let data = null,
+        currentFile = null;
+      let latHistory = []; // 时延历史 [{total,server,net}]
+      // ---- 等价 curl 提示 ----
+      function updateCurlHint() {
+        const name = currentFile ? currentFile.name : "<图片>";
+        $("curlHint").innerHTML =
+          `等价命令：<b>curl -X POST ${urlInp.value} -F "file=@${name}"</b>`;
+      }
+      urlInp.addEventListener("input", updateCurlHint); // ---- 图片上传 ----
+      drop.addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", (e) => {
+        if (e.target.files[0]) loadFile(e.target.files[0]);
+      });
+      ["dragenter", "dragover"].forEach((ev) =>
+        drop.addEventListener(ev, (e) => {
+          e.preventDefault();
+          drop.classList.add("over");
+        }),
+      );
+      ["dragleave", "drop"].forEach((ev) =>
+        drop.addEventListener(ev, (e) => {
+          e.preventDefault();
+          drop.classList.remove("over");
+        }),
+      );
+      drop.addEventListener("drop", (e) => {
+        const f = e.dataTransfer.files[0];
+        if (f) loadFile(f);
+      });
+      vp.addEventListener("dragover", (e) => e.preventDefault());
+      vp.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const f = e.dataTransfer.files[0];
+        if (f && f.type.startsWith("image/")) loadFile(f);
+      });
+      function loadFile(file) {
+        currentFile = file;
+        callBtn.disabled = false;
+        $("imgMeta").textContent =
+          `${file.name} · ${(file.size / 1024).toFixed(0)}KB`;
+        img.onload = () => {
+          natW = img.naturalWidth;
+          natH = img.naturalHeight;
+          hint.style.display = "none";
+          stage.style.display = "block";
+          fitView();
+          renderOverlay();
+          if ($("autoCall").checked) callDetect();
+        };
+        img.onerror = () => setStatus("err", "图片解码失败");
+        img.src = URL.createObjectURL(file);
+        updateCurlHint();
+      } // ---- 调用服务 ----
+      callBtn.addEventListener("click", callDetect);
+      async function callDetect() {
+        if (!currentFile) {
+          setStatus("warn", "请先上传图片");
+          return;
+        }
+        const url = urlInp.value.trim();
+        let parsedUrl;
+        try {
+          parsedUrl = new URL(url);
+        } catch {
+          setStatus(
+            "err",
+            `URL 格式非法:${url}\n请填单个完整地址,勿出现 http://https:// 双协议;\n例如 https://166.108.231.14/v2/infer/<id>/api/v1/detect`,
+          );
+          return;
+        }
+        if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+          setStatus("err", "URL 必须以 http:// 或 https:// 开头");
+          return;
+        }
+        callBtn.disabled = true;
+        callBtn.innerHTML = '<span class="spinner"></span> 解析中…';
+        setStatus("", "");
+        respJson.textContent = "（请求中…）";
+        const fd = new FormData();
+        fd.append("file", currentFile);
+        const t0 = performance.now();
+        let total;
+        try {
+          const res = await fetch(url, { method: "POST", body: fd });
+          const text = await res.text();
+          total = performance.now() - t0;
+          let json;
+          try {
+            json = JSON.parse(text);
+          } catch {
+            setStatus(
+              "err",
+              `HTTP ${res.status} · 响应非 JSON：\n${text.slice(0, 300)}`,
+            );
+            showLatency(total, null);
+            return;
+          }
+          respJson.textContent = JSON.stringify(json, null, 2);
+          const pms = json.processing_time_ms;
+          if (res.ok && json.success && json.data) {
+            data = json.data;
+            renderOverlay();
+            updateInfo(json);
+            const n = (data.hand_points || []).length;
+            setStatus(
+              "ok",
+              `✓ 检测成功 · ${n} 个关键点 · 推理 ${pms != null ? (+pms).toFixed(1) : "?"}ms`,
+            );
+          } else if (res.ok && json.success === false) {
+            // 业务级“无手/无指向”，如 NO_HAND_DETECTED
+            data = null;
+            svg.innerHTML = "";
+            const e = json.error || {};
+            setStatus(
+              "warn",
+              `⚠ ${e.code || "NO_RESULT"}：${e.message || "未检测到"}（推理 ${pms != null ? (+pms).toFixed(1) : "?"}ms）`,
+            );
+            info.innerHTML = `<span style="color:var(--warn)">该图未检测到手势：${e.code || ""}<br>${e.message || ""}</span>`;
+          } else {
+            data = null;
+            svg.innerHTML = "";
+            setStatus("err", `HTTP ${res.status}：${json.detail || text}`);
+          }
+          showLatency(total, pms != null ? +pms : null);
+        } catch (e) {
+          total = performance.now() - t0;
+          setStatus(
+            "err",
+            `调用失败：${e.message}\n请检查：① 服务是否已启动 ② 地址是否正确 ③ 是否存在 CORS 跨域拦截`,
+          );
+          showLatency(total, null);
+        } finally {
+          callBtn.disabled = false;
+          callBtn.innerHTML = "🚀 调用解析";
+        }
+      }
+      function setStatus(type, msg) {
+        statusEl.textContent = msg || "";
+        statusEl.className = "status" + (type ? " " + type : "");
+      } // ---- 时延分析 ----
+      function showLatency(total, serverMs) {
+        total = Math.max(0, total);
+        const server = serverMs != null && !isNaN(serverMs) ? +serverMs : null;
+        const net = server != null ? Math.max(0, total - server) : null;
+        latHistory.push({ total, server, net });
+        if (latHistory.length > 8) latHistory.shift();
+        const judge = (t) =>
+          t < 300
+            ? { t: "极快", c: "ok" }
+            : t < 800
+              ? { t: "正常", c: "ok" }
+              : t < 1500
+                ? { t: "偏慢", c: "warn" }
+                : { t: "较慢", c: "err" };
+        const j = judge(total);
+        const sPct =
+          server != null && total > 0
+            ? Math.min(100, (server / total) * 100)
+            : 0;
+        const nPct =
+          net != null && total > 0
+            ? Math.max(0, 100 - sPct)
+            : total > 0
+              ? 100
+              : 0;
+        const avg =
+          latHistory.reduce((a, b) => a + b.total, 0) / latHistory.length;
+        const maxT = Math.max(1, ...latHistory.map((h) => h.total));
+        const bars = latHistory
+          .map((h) => {
+            const c = judge(h.total).c,
+              p = Math.max(6, (h.total / maxT) * 34);
+            return `<span class="bar ${c}" style="height:${p}px" title="${h.total.toFixed(0)}ms"></span>`;
+          })
+          .join("");
+        const sw = (col) =>
+          `<i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${col};margin-right:4px;vertical-align:middle"></i>`;
+        latBox.innerHTML = `     <div class="lat-head">       <span class="lat-num ${j.c}">${total.toFixed(0)}</span><span class="lat-unit">ms</span>       <span class="lat-judge ${j.c}">${j.t}</span>     </div>     <div class="lat-sub">端到端往返：请求发出 → 响应体接收完成</div>     <div class="lat-bar">       <div class="lat-seg server" style="width:${sPct}%"></div>       <div class="lat-seg net" style="width:${nPct}%"></div>     </div>     <div class="lat-legend">${sw("var(--accent)")}服务端推理　${sw("var(--warn)")}网络+框架</div>     <table class="lat-tbl">       <tr><td>服务端推理 processing_time_ms</td><td>${server != null ? server.toFixed(1) + " ms" : "—"}</td></tr>       <tr><td>网络 + 框架开销</td><td>${net != null ? net.toFixed(1) + " ms" : "—"}</td></tr>     </table>     <div class="lat-hist">最近 ${latHistory.length} 次 · 平均 <b style="color:var(--accent)">${avg.toFixed(0)} ms</b></div>     <div class="lat-bars">${bars}</div>`;
+      } // ---- 检测信息 ----
+      function updateInfo(obj) {
+        const d = obj.data;
+        const ms = obj.processing_time_ms;
+        const stateTxt = HAND_STATE[d.hand_state] ?? d.hand_state;
+        const timing = [
+          ["手部检测", d.hand_detector_time_ms],
+          ["关键点", d.hand_predict_time_ms],
+          ["指向预测", d.point_forward_time_ms],
+          ["后处理", d.post_time_ms],
+        ].filter((r) => r[1] != null);
+        const conf =
+          d.confidence != null ? (d.confidence * 100).toFixed(2) + "%" : "—";
+        info.innerHTML = `     <div class="grid2">       <div><span class="badge">${d.hand_type || "—"}</span> 手型</div>       <div><span class="badge">${stateTxt}</span> hand_state</div>       <div style="color:var(--ok)">指向: ${d.is_pointing ? "是" : "否"}</div>       <div>置信度: <b style="color:var(--accent)">${conf}</b></div>     </div>     <hr style="border:0;border-top:1px solid var(--border);margin:8px 0">     <table class="timing">       ${timing.map((r) => `<tr><td>${r[0]}</td><td>${(+r[1]).toFixed(1)} ms</td></tr>`).join("")}       ${ms != null ? `<tr><td style="color:var(--muted)">总耗时</td><td style="color:var(--finger)">${(+ms).toFixed(1)} ms</td></tr>` : ""}     </table>`;
+      } // ---- 坐标映射：检测像素 → 上传图像素 ----
+      function sx(x) {
+        return x * (natW / dW);
+      }
+      function sy(y) {
+        return y * (natH / dH);
+      } // ---- 渲染叠加层 ----
+      function renderOverlay() {
+        if (!natW || !data) {
+          svg.innerHTML = "";
+          return;
+        } // 由 forefinger_coordinate(归一化) ↔ hand_points[8](像素) 反推检测原图尺寸
+        const _pts = data.hand_points,
+          _ff = data.forefinger_coordinate;
+        let _w = natW,
+          _h = natH;
+        if (_pts && _pts[8] && _ff && _ff[0] && _ff[1]) {
+          const a = _pts[8][0] / _ff[0],
+            b = _pts[8][1] / _ff[1];
+          if (isFinite(a) && a > 0) _w = a;
+          if (isFinite(b) && b > 0) _h = b;
+        }
+        dW = _w;
+        dH = _h;
+        const W = natW,
+          H = natH,
+          fs = Math.min(W, H);
+        svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+        const L = {
+          hand: $("Lhand").checked,
+          point: $("Lpoint").checked,
+          kpt: $("Lkpt").checked,
+          skel: $("Lskel").checked,
+          finger: $("Lfinger").checked,
+          num: $("Lnum").checked,
+        };
+        let s = "";
+        if (L.point && data.pointing_bbox) {
+          const b = data.pointing_bbox,
+            x = b[0] * W,
+            y = b[1] * H,
+            w = (b[2] - b[0]) * W,
+            h = (b[3] - b[1]) * H;
+          s += `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" style="stroke:var(--point)"/>`;
+          s += tag(x + 2, y - 4, "指向 pointing", "var(--point)", fs);
+        }
+        if (L.hand && data.hand_bbox) {
+          const b = data.hand_bbox,
+            x = b[0] * W,
+            y = b[1] * H,
+            w = (b[2] - b[0]) * W,
+            h = (b[3] - b[1]) * H;
+          s += `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" style="stroke:var(--hand)"/>`;
+          s += tag(x + 2, y + h - 6, "手部 hand", "var(--hand)", fs);
+        }
+        const pts = data.hand_points;
+        if (pts && pts.length) {
+          if (L.skel) {
+            s += SKELETON.map(([a, b]) => {
+              if (!pts[a] || !pts[b]) return "";
+              return `<line class="skel" x1="${sx(pts[a][0])}" y1="${sy(pts[a][1])}" x2="${sx(pts[b][0])}" y2="${sy(pts[b][1])}"/>`;
+            }).join("");
+          }
+          if (L.kpt) {
+            s += pts
+              .map((p, i) => {
+                const cx = sx(p[0]),
+                  cy = sy(p[1]),
+                  r = fs * 0.007;
+                return `<circle class="kpt" cx="${cx}" cy="${cy}" r="${r}" data-i="${i}"/>`;
+              })
+              .join("");
+          }
+          if (L.num && L.kpt) {
+            s += pts
+              .map((p, i) => {
+                const cx = sx(p[0]),
+                  cy = sy(p[1]);
+                return `<text class="num" x="${cx + fs * 0.02}" y="${cy - fs * 0.02}" font-size="${fs * 0.022}">${i}</text>`;
+              })
+              .join("");
+          }
+          if (L.finger) {
+            let fx, fy;
+            if (data.forefinger_coordinate) {
+              fx = data.forefinger_coordinate[0] * W;
+              fy = data.forefinger_coordinate[1] * H;
+            } else if (pts[8]) {
+              fx = sx(pts[8][0]);
+              fy = sy(pts[8][1]);
+            }
+            if (fx != null) {
+              const r = fs * 0.012;
+              s += `<circle class="ring" cx="${fx}" cy="${fy}" r="${r}"/>`;
+              s += `<circle class="finger" cx="${fx}" cy="${fy}" r="${r}"/>`;
+              s += tag(fx + r, fy, "食指指尖 #8", "var(--finger)", fs);
+            }
+          }
+        }
+        svg.innerHTML = s;
+        applyTransform();
+      }
+      function tag(x, y, text, color, fs) {
+        const w = text.length * fs * 0.012 + fs * 0.01,
+          h = fs * 0.024;
+        return `<rect x="${x}" y="${y - h}" width="${w}" height="${h}" fill="rgba(10,13,18,.7)" stroke="${color}" stroke-width="1" vector-effect="non-scaling-stroke" rx="2"/>           <text class="tag" x="${x + fs * 0.006}" y="${y - fs * 0.007}" font-size="${fs * 0.02}" fill="${color}">${text}</text>`;
+      } // ---- 视图变换（平移/缩放） ----
+      function fitView() {
+        if (!natW) return;
+        const r = vp.getBoundingClientRect();
+        fitScale = Math.min(r.width / natW, r.height / natH);
+        zoom = 1;
+        panX = (r.width - natW * fitScale) / 2;
+        panY = (r.height - natH * fitScale) / 2;
+        applyTransform();
+      }
+      function applyTransform() {
+        if (!natW) return;
+        stage.style.width = natW * fitScale + "px";
+        stage.style.height = natH * fitScale + "px";
+        stage.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+        $("zoomVal").textContent = Math.round(fitScale * zoom * 100) + "%";
+      }
+      function clampZoom(z) {
+        return Math.max(0.05, Math.min(40, z));
+      }
+      vp.addEventListener(
+        "wheel",
+        (e) => {
+          if (!natW) return;
+          e.preventDefault();
+          const r = vp.getBoundingClientRect(),
+            cx = e.clientX - r.left,
+            cy = e.clientY - r.top;
+          const nz = clampZoom(zoom * Math.exp(-e.deltaY * 0.0015));
+          const px = (cx - panX) / (fitScale * zoom),
+            py = (cy - panY) / (fitScale * zoom);
+          zoom = nz;
+          panX = cx - px * fitScale * zoom;
+          panY = cy - py * fitScale * zoom;
+          applyTransform();
+        },
+        { passive: false },
+      );
+      let panning = false,
+        ps = {};
+      vp.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        panning = true;
+        vp.classList.add("panning");
+        ps = { x: e.clientX, y: e.clientY, px: panX, py: panY };
+        e.preventDefault();
+      });
+      window.addEventListener("mousemove", (e) => {
+        if (!panning) return;
+        panX = ps.px + (e.clientX - ps.x);
+        panY = ps.py + (e.clientY - ps.y);
+        applyTransform();
+      });
+      window.addEventListener("mouseup", () => {
+        panning = false;
+        vp.classList.remove("panning");
+      });
+      vp.addEventListener("dblclick", fitView);
+      $("resetBtn").addEventListener("click", fitView);
+      new ResizeObserver(() => {
+        if (natW) fitView();
+      }).observe(vp); // ---- 关键点 hover ----
+      svg.addEventListener("mousemove", (e) => {
+        if (!data || !data.hand_points) {
+          tip.style.display = "none";
+          return;
+        }
+        const r = vp.getBoundingClientRect();
+        const cx = (e.clientX - r.left - panX) / (fitScale * zoom),
+          cy = (e.clientY - r.top - panY) / (fitScale * zoom);
+        let best = -1,
+          bd = Infinity;
+        const thr = 26 / (fitScale * zoom);
+        data.hand_points.forEach((p, i) => {
+          const d = Math.hypot(sx(p[0]) - cx, sy(p[1]) - cy);
+          if (d < bd) {
+            bd = d;
+            best = i;
+          }
+        });
+        if (best >= 0 && bd < thr) {
+          const p = data.hand_points[best];
+          tip.style.display = "block";
+          tip.style.left = e.clientX - r.left + 14 + "px";
+          tip.style.top = e.clientY - r.top + 14 + "px";
+          tip.innerHTML = `#${best} · 像素(${p[0].toFixed(1)}, ${p[1].toFixed(1)})`;
+        } else tip.style.display = "none";
+      });
+      svg.addEventListener("mouseleave", () => (tip.style.display = "none"));
+      ["Lhand", "Lpoint", "Lkpt", "Lskel", "Lfinger", "Lnum"].forEach((id) =>
+        $(id).addEventListener("change", renderOverlay),
+      );
+      updateCurlHint();
+    </script>
+  </body>
+</html>
+ 
