@@ -24,11 +24,11 @@ const status=code=>e=>e.status===code;
 
 for(const cascade of [false,true])test(`older schema3 without recoveryDrafts supports preview, export and ${cascade?'cascade':'keep'} deletion`,t=>{
   const {db,ws,save,preview,remove,data}=fixture(t);save();
-  const stored=ws.read();delete stored.recoveryDrafts;
+  const stored=ws.read();stored.schemaVersion=3;delete stored.recoveryDrafts;delete stored.versionTags;
   const raw=JSON.stringify(stored);db.prepare('UPDATE workspace SET data=? WHERE id=1').run(raw);
   const target={targetType:'dictionary',kind:'regions',id:data.regionId};
   const p=preview(target);assert.equal(p.counts.recoveryDrafts,0);assert.equal(p.counts.configs,1);
-  assert.deepEqual(ws.read(),{...stored,recoveryDrafts:[]});
+  assert.deepEqual(ws.read(),{...stored,schemaVersion:4,recoveryDrafts:[],versionTags:[]});
   const binding=preview({targetType:'binding',id:stored.bindings[0].id});assert.equal(binding.counts.recoveryDrafts,0);
   const backup=ws.export({id:'admin'});assert.deepEqual(backup.recoveryDrafts,[]);assert.equal(backup.versions.length,1);
   assert.equal(db.prepare('SELECT data FROM workspace WHERE id=1').get().data,raw,'read and preview must not rewrite existing data');

@@ -3,7 +3,7 @@ import { hash } from './core.js';
 const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', { fatal: true });
 const DEFAULT_MAX = 20 * 1024 * 1024;
 const MAX_TOTAL = 1024 * 1024 * 1024;
-const ARRAY_KINDS = { configs: 'config', versions: 'version', recoveryDrafts: 'recoveryDraft', legacy: 'legacy' };
+const ARRAY_KINDS = { configs: 'config', versions: 'version', versionTags:'versionTag', recoveryDrafts: 'recoveryDraft', legacy: 'legacy' };
 const u16 = (a, p, n) => { a[p] = n & 255; a[p + 1] = n >>> 8 & 255; };
 const u32 = (a, p, n) => { u16(a, p, n); u16(a, p + 2, n >>> 16); };
 const r16 = (a, p) => a[p] | a[p + 1] << 8;
@@ -59,7 +59,7 @@ export function encodeArchive(backup, maxBytes = DEFAULT_MAX) {
     shards.push({ kind, content, count: items.length, from: items[0]?.index ?? 0, to: items.at(-1)?.index ?? 0 });
   };
   add('header', [{ index: 0, record: header }]);
-  for (const kind of ['config', 'version', 'recoveryDraft', 'legacy', 'legacy-versions', 'legacy-drafts', 'legacy-recoveryDrafts']) {
+  for (const kind of ['config', 'version', 'versionTag', 'recoveryDraft', 'legacy', 'legacy-versions', 'legacy-drafts', 'legacy-recoveryDrafts']) {
     let group = [];
     for (const item of records.filter(record => record.kind === kind)) {
       if (encoder.encode(JSON.stringify({ kind, records: [...group, item] })).length > maxBytes && group.length) { add(kind, group); group = []; }
@@ -105,8 +105,9 @@ export function decodeArchive(input) {
   const entries = unzip(bytes), rawManifest = entries.get('manifest.json');
   if (!rawManifest || rawManifest.length > 1024 * 1024) throw Error('缺少归档清单');
   const manifest = JSON.parse(decoder.decode(rawManifest));
+  if(manifest.counts&&manifest.counts.versionTags===undefined&&!manifest.arraysPresent?.versionTags)manifest.counts.versionTags=0;
   if (manifest.archiveVersion !== 2 || !Number.isSafeInteger(manifest.totalBytes) || manifest.totalBytes > MAX_TOTAL || !Number.isSafeInteger(manifest.shardCount) || manifest.shardCount !== manifest.shards?.length || entries.size !== manifest.shardCount + 1 || !manifest.counts || Object.keys(ARRAY_KINDS).some(key => !Number.isSafeInteger(manifest.counts[key]))) throw Error('归档清单无效');
-  const collected = { header: [], config: [], version: [], recoveryDraft: [], legacy: [], 'legacy-versions': [], 'legacy-drafts': [], 'legacy-recoveryDrafts': [] };
+  const collected = { header: [], config: [], version: [], versionTag: [], recoveryDraft: [], legacy: [], 'legacy-versions': [], 'legacy-drafts': [], 'legacy-recoveryDrafts': [] };
   manifest.shards.forEach((part, i) => {
     const name = `parts/${String(i).padStart(5, '0')}.json`, data = entries.get(name);
     if (part.name !== name || !data || part.bytes !== data.length || part.sha256 !== hash(data) || !Object.hasOwn(collected, part.kind)) throw Error('归档分片缺失或损坏');

@@ -26,9 +26,9 @@ try {
   }
   await page.locator('#binding-region').selectOption({index:1});await page.locator('#binding-type').selectOption({index:1});await page.locator('#binding-names input').first().check();await page.locator('#binding-save').click();
   await wait(()=>service.workspace.read().bindings.length===1,'binding');
-  await nav('convert');await page.locator('#convert-input').fill('name: demo\nport: 8080\n');await page.locator('#convert').click();
-  assert.equal(JSON.parse(await page.locator('#convert-input').inputValue()).port,8080);
-  await page.locator('#convert').click();assert.match(await page.locator('#convert-input').inputValue(),/port: 8080/);
+  await nav('convert');await page.locator('#convert-input').fill('env:\n  - name: APP_NAME\n    value: demo\n  - name: PORT\n    value: "8080"\n');await page.locator('#convert').click();
+  assert.deepEqual(JSON.parse(await page.locator('#convert-input').inputValue()),{APP_NAME:'demo',PORT:'8080'});
+  await page.locator('#convert').click();assert.match(await page.locator('#convert-input').inputValue(),/^env:/);
   await nav('configs');await page.locator('#new-config').click();
   await page.locator('#save-region').selectOption({index:1});await page.locator('#save-type').selectOption({index:1});await page.locator('#save-name').selectOption({index:1});
   await page.locator('#config-editor').fill('{"port":8080,"host":"localhost"}');await page.locator('#save-version').click();

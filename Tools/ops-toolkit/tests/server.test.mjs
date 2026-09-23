@@ -70,7 +70,9 @@ test('HTTP role matrix protects users, commands, exports and serialized state',a
   const result=await request('/api/workspace','GET',null,reader);assert.equal(result.status,200);
   assert.equal(result.body.versions[0].submittedByUsername,'writer');assert.ok(!JSON.stringify(result.body).includes('passwordHash'));
   assert.equal((await request('/api/commands','POST',{type:'delete',id:created.body.result.configId,expectedRevision:0,data:{}},writer)).status,409);
-  assert.equal((await request('/api/backup','GET',null,writer)).body.schemaVersion,3);
+  assert.equal((await request('/api/backup','GET',null,writer)).status,403);
+  assert.equal((await request('/api/commands','POST',{type:'settings',data:{}},writer)).status,403);
+  assert.equal((await request('/api/backup','GET',null,admin)).body.schemaVersion,4);
   assert.equal((await request('/api/export?kind=configs&regionId='+r,'GET',null,writer)).body.counts.configs,1);
   const previewPath='/api/environment-delete-preview?targetType=dictionary&kind=regions&id='+r;
   assert.equal((await request(previewPath)).status,401);

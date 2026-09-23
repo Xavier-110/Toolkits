@@ -5,14 +5,14 @@ import { transaction, fail } from './database.js';
 const derive = promisify(scrypt);
 const roles = ['admin', 'operate', 'readonly'];
 const digest = token => createHash('sha256').update(token).digest('hex');
-function validatePassword(password) {
+export function validatePassword(password) {
   if (typeof password !== 'string' || password.length < 12 || password.length > 128) fail(400, '密码长度须为 12～128 个字符');
 }
-async function hashPassword(password, salt = randomBytes(16).toString('hex')) {
+export async function hashPassword(password, salt = randomBytes(16).toString('hex')) {
   const hash = await derive(password, salt, 64, {N:32768, r:8, p:1, maxmem:64*1024*1024});
   return `${salt}:${hash.toString('hex')}`;
 }
-async function verify(password, encoded) {
+export async function verify(password, encoded) {
   if (typeof password !== 'string' || password.length > 128) return false;
   const computed = await hashPassword(password, encoded.split(':')[0]);
   return timingSafeEqual(Buffer.from(computed), Buffer.from(encoded));

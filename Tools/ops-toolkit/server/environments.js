@@ -46,6 +46,7 @@ export function environmentImpact(state,data){
     counts:{bindings:bindings.length,configs:configs.length,versions:versions.length,recoveryDrafts:recoveryDrafts.length,archived:configs.filter(x=>x.archivedAt).length}};
 }
 export function removeConfigs(state,ids){
+  if(state.versionTags)state.versionTags=state.versionTags.filter(x=>!ids.has(x.configSetId));
   state.configs=state.configs.filter(x=>!ids.has(x.id));
   state.versions=state.versions.filter(x=>!ids.has(x.configSetId));
   state.recoveryDrafts=state.recoveryDrafts.filter(x=>!ids.has(x.configSetId));

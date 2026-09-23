@@ -1,5 +1,5 @@
 import { stringify as yamlStringify, parseDocument, isMap, isSeq, isScalar } from 'yaml';
-import { parseJSON, parseYAML, serialize, hash, pointer, own, validateEnv, sensitiveName } from './core.js';
+import { parseJSON, parseYAML, serialize, hash, pointer, own, validateEnv, sensitiveName, compare, hasExpansion } from './core.js';
 
 function jsonLikeScalar(text) {
   const trimmed = text.trimStart();
@@ -87,6 +87,48 @@ export function toggleFormat(text) {
   const detected = detectFormat(text);
   const format = detected.format === 'json' ? 'yaml' : 'json';
   return { ...detected, format, text: format === 'json' ? serialize(detected.data, 'asc') : yamlStringify(detected.data, { lineWidth: 0 }) };
+}
+function simpleEnvironment(data) {
+  if (!data || Array.isArray(data) || typeof data !== 'object' || Object.keys(data).length !== 1 || !Array.isArray(data.env)) throw Error('YAML 环境变量需要 env: 下的 name/value 列表');
+  const result=Object.create(null);
+  for (const row of data.env) {
+    if (!row || typeof row!=='object' || Array.isArray(row) || Object.keys(row).some(k=>!['name','value'].includes(k)) || typeof row.value!=='string') throw Error('简单 env 仅支持 name 和字符串 value，不支持缺省值或 valueFrom');
+    validateEnv([row]);
+    if(own(result,row.name))throw Error(`重复环境变量：${row.name}`);
+    result[row.name]=row.value;
+  }
+  return result;
+}
+export function conversionJSON(text,sort='asc') {
+  const detected=detectFormat(text);
+  const data=detected.data && !Array.isArray(detected.data) && typeof detected.data==='object' && own(detected.data,'env') ? simpleEnvironment(detected.data) : detected.data;
+  const confirmations=sort!=='none'&&data&&typeof data==='object'&&Object.values(data).some(value=>typeof value==='string'&&hasExpansion(value))?['变量展开可能依赖原始顺序，排序后请检查 $(...) 引用。']:[];
+  return {...detected,format:'json',data,text:serialize(data,sort),confirmations};
+}
+export function environmentConversion(text,sort='asc') {
+  if(!['asc','desc','none'].includes(sort))throw Error('排序方式无效');
+  const detected=detectFormat(text),confirmations=[];
+  let data=detected.data;
+  if(detected.format==='yaml') {
+    if(data && typeof data==='object' && !Array.isArray(data) && own(data,'env'))data=simpleEnvironment(data);
+    if(!data || typeof data!=='object' || Array.isArray(data) || Object.values(data).some(v=>typeof v!=='string'))throw Error('YAML 需要简单 env 或字符串键值对象');
+    if(sort!=='none'&&Object.values(data).some(v=>typeof v==='string'&&hasExpansion(v)))confirmations.push('排序可能改变环境变量展开结果，可取消并选择保持原序。');
+    return {...detected,data,format:'json',text:serialize(data,sort),confirmations};
+  }
+  if(!data || typeof data!=='object' || Array.isArray(data))throw Error('转换 env 需要变量名作 key 的 JSON 对象');
+  let keys=Object.keys(data);if(sort!=='none')keys.sort((a,b)=>compare(a,b)*(sort==='desc'?-1:1));
+  if(keys.length>5000)throw Error('环境变量不能超过5000项');
+  let coerced=false;
+  const env=keys.map(name=>{
+    const value=data[name];
+    if(value===null || !['string','boolean','number'].includes(typeof value))throw Error(`字段 ${name} 不是简单环境变量，不能转换 null、对象或数组`);
+    if(typeof value!=='string')coerced=true;
+    return {name,value:String(value)};
+  });
+  validateEnv(env);
+  if(coerced)confirmations.push('数字和布尔值将转换为环境变量字符串，转回 JSON 后保留字符串类型。');
+  if(sort!=='none'&&Object.values(data).some(v=>typeof v==='string'&&hasExpansion(v)))confirmations.push('排序可能改变环境变量展开结果，可取消并选择保持原序。');
+  return {...detected,data:{env},format:'yaml',text:yamlStringify({env},{lineWidth:0}),confirmations};
 }
 const typeOf = value => value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
 export function fieldRows(data) {
@@ -179,17 +221,18 @@ export function snapshotHash(payload) {
   const content = typeof payload.jsonContent === 'string' ? normalizeJSON(payload.jsonContent).data : payload.data;
   return hash(serialize({ modelVersion: 1, content, fieldDescriptions: payload.fieldDescriptions || {}, itemMetadata: payload.itemMetadata || {}, description: payload.description || '', tags: payload.tags || [] }, 'asc', 0));
 }
-export function maskConfiguration(data, itemMetadata = {}, reveal = false) {
-  const copy = structuredClone(data);
-  if (reveal) return copy;
-  const marked = (name, key) => {
+export function sensitiveField(name,key,itemMetadata={}) {
     const aliases = key.startsWith('env:') ? [key, key.slice(4)] : [key];
     for (const alias of aliases) {
       if (own(itemMetadata, `!${alias}`)) return false;
       if (own(itemMetadata, alias)) return !!itemMetadata[alias];
     }
     return sensitiveName(name);
-  };
+}
+export function maskConfiguration(data, itemMetadata = {}, reveal = false) {
+  const copy = structuredClone(data);
+  if (reveal) return copy;
+  const marked=(name,key)=>sensitiveField(name,key,itemMetadata);
   const maskEnv = rows => rows.forEach(row => { if (marked(row.name, `env:${row.name}`)) { if (own(row, 'value')) row.value = '••••'; if (own(row, 'valueFrom')) row.valueFrom = '••••'; } });
   if (Array.isArray(copy) && isEnv(copy)) { maskEnv(copy); return copy; }
   if (marked('$', '/') && own(itemMetadata, '/')) return '••••';

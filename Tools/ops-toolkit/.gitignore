@@ -4,3 +4,7 @@ data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+storage-config.key
+storage-config.enc
+storage-config.enc.*.tmp
+database-test.local.json
