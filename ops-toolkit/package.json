@@ -1,13 +1,12 @@
 {
-  "name": "offline-ops-toolkit",
+  "name": "ops-toolkit",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test tests/*.test.mjs",
-    "test:browser": "node tests/browser.mjs",
-    "serve": "node serve.mjs",
+    "test:browser": "node tests/manual-online-browser.mjs",
     "start": "node server/start.mjs",
     "init-admin": "node server/init-admin.mjs",
     "test:online": "node tests/manual-online-browser.mjs",
@@ -26,7 +25,6 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2",
-    "fake-indexeddb": "6.2.5",
     "playwright": "1.63.0"
   }
 }

@@ -1,6 +1,6 @@
 import {openDatabase,fail,transaction as sqliteTransaction} from './database.js';
 import {normalizeWorkspaceState} from './workspace.js';
-import {emptyState} from '../src/store.js';
+import {createWorkspaceState} from '../src/workspace-state.js';
 
 export function validateConnection(input,{local=false}={}){
   if(!input||typeof input!=='object'||Array.isArray(input))fail(400,'连接信息无效');
@@ -87,7 +87,7 @@ async function initialize(store){
     if(!exists)await store.raw(statement);
   }
   const rows=await store.raw(`SELECT ${q('id')} FROM ${t('workspace')}`);
-  if(!rows.length)await store.raw(`INSERT INTO ${t('workspace')} (${q('id')},${q('data')}) VALUES (${store.placeholders(2)})`,[1,JSON.stringify(normalizeWorkspaceState(emptyState()))]);
+  if(!rows.length)await store.raw(`INSERT INTO ${t('workspace')} (${q('id')},${q('data')}) VALUES (${store.placeholders(2)})`,[1,JSON.stringify(normalizeWorkspaceState(createWorkspaceState()))]);
   else if(rows.length!==1||Number(rows[0].id)!==1)fail(409,'目标工具箱表结构不兼容');
 }
 export async function openStore(input,{initializeTables=true,db}={}){

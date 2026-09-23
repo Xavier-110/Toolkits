@@ -2,7 +2,8 @@ import {createVersionTag,deleteVersionTag,validateVersionTags,tagCopy} from './v
 import { randomUUID, createHash } from 'node:crypto';
 import { Auth } from './auth.js';
 import { transaction, fail } from './database.js';
-import { validateBackup } from '../src/store.js';
+import { validateBackup } from './legacy-backup.js';
+import { createWorkspaceState as fresh } from '../src/workspace-state.js';
 import { normalizeJSON, validateDescriptions, snapshotHash, maskConfiguration } from '../src/config-model.js';
 import { contentHash, serialize, parseInput } from '../src/core.js';
 import { createBindings, environmentImpact, deleteEnvironment, removeConfigs, deletionKeys, validateDeletion } from './environments.js';
@@ -15,7 +16,6 @@ function fields(v,allowed){if(!object(v)||Object.keys(v).some(k=>!allowed.includ
 function string(v,max=120,empty=false){if(typeof v!=='string'||v.length>max||!empty&&!v.trim())fail(400,'文本字段无效');return v;}
 function id(v){return string(v,120);}
 function digest(v){return createHash('sha256').update(JSON.stringify(v)).digest('hex');}
-function fresh(revision=0){return {schemaVersion:4,versionTags:[],revision,dictionaries:{regions:[],environmentTypes:[],configNames:[]},bindings:[],configs:[],versions:[],legacy:[],recoveryDrafts:[],receipts:[],settings:{expiryWarningDays:30}};}
 function readSchema3(state){
   // Early schema3 workspaces predate recoveryDrafts. Hydrate the parsed copy;
   // reads stay read-only, and the next successful transaction persists it.

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../server/database.js';
 import { Workspace } from '../server/workspace.js';
-import { emptyState, addConfig, makeDraft, exportBackup } from '../src/store.js';
+import { legacyWorkspace, legacyBackup as exportBackup } from './fixtures/legacy-backup.mjs';
 import { createHash } from 'node:crypto';
 
 function fixture(t) {
@@ -48,8 +48,8 @@ test('schema one state is retained as unmapped legacy',t=>{
   const state=ws.read();assert.equal(state.schemaVersion,4);assert.equal(state.legacy.length,0);assert.equal(state.configs.length,0);
 });
 test('v1 import keeps individual histories unmapped, then maps IDs and recovery drafts',t=>{
-  const {ws,run,data}=fixture(t),old=emptyState();
-  const oldId=addConfig(old,{project:'old-project',environment:'old-env',name:'old-name',type:'json',description:'whole'},makeDraft('{"a":1}','json'));
+  const {ws,run,data}=fixture(t),old=legacyWorkspace({project:'old-project',environment:'old-env',name:'old-name',description:'whole'});
+  const oldId=old.configs[0].id;
   old.drafts[0].rawInput='{broken';old.drafts[0].validationState='invalid';
   const oldVersion=old.versions[0];oldVersion.submittedByUsername='historical';
   const backup=exportBackup(old);const imported=run('import',{backup});assert.equal(imported.legacy,1);
@@ -69,6 +69,17 @@ test('schema3 import rejects tampered history and strips extra credentials',t=>{
   delete clean.digest;clean.digest=createHash('sha256').update(JSON.stringify(clean)).digest('hex');
   assert.deepEqual(run('import',{backup:clean,skipConflicts:true}),{imported:0,skipped:1});
   assert.ok(!JSON.stringify(ws.read()).includes('secret'));
+});
+
+test('v2 historical backups import and map without the retired browser runtime',t=>{
+  const {ws,run,data}=fixture(t),old=legacyWorkspace();
+  const backup=exportBackup(old,2);
+  assert.equal(run('import',{backup}).legacy,1);
+  const pending=ws.read().legacy[0];
+  run('mapLegacy',{legacyId:pending.id,regionId:data.regionId,environmentTypeId:data.environmentTypeId,configNameId:data.configNameId});
+  assert.equal(ws.read().legacy.length,0);
+  assert.equal(ws.read().configs[0].id,old.configs[0].id);
+  assert.equal(ws.read().versions[0].id,old.versions[0].id);
 });
 test('copy creates an independent config with source provenance',t=>{
   const {ws,run,data}=fixture(t);const source=run('save',data);
@@ -109,7 +120,7 @@ test('version export carries recovery records and import validates their referen
   const copied=ws.read().configs.find(c=>c.configNameId===newName),recovered=ws.read().recoveryDrafts.find(r=>r.configSetId===copied.id);assert.ok(recovered);assert.notEqual(recovered.id,'recovery-a');
 });
 test('legacy export round trips pending rows and strips injected credentials',t=>{
-  const {ws,run}=fixture(t),old=emptyState();addConfig(old,{project:'P',environment:'E',name:'N',type:'json'},makeDraft('{"a":1}','json'));
+  const {ws,run}=fixture(t),old=legacyWorkspace();
   run('import',{backup:exportBackup(old)});const pkg=ws.legacyExport({id:'admin',username:'admin'});assert.equal(pkg.counts.legacy,1);
   pkg.legacy[0].versions[0].passwordHash='secret';pkg.legacy[0].drafts[0].token='secret';delete pkg.digest;pkg.digest=createHash('sha256').update(JSON.stringify(pkg)).digest('hex');
   const db=openDatabase(':memory:');t.after(()=>db.close());db.prepare('INSERT INTO users VALUES (?,?,?,?,1,0,?)').run('admin','admin','unused','admin','2026-09-21T00:00:00Z');const target=new Workspace(db);
@@ -117,7 +128,7 @@ test('legacy export round trips pending rows and strips injected credentials',t=
   assert.throws(()=>target.execute({id:'admin'},{type:'import',data:{backup:pkg}}),e=>e.status===409);
 });
 test('legacy export import rejects tampered version content, hash, and recovery associations',t=>{
-  const {ws,run}=fixture(t),old=emptyState();addConfig(old,{project:'P',environment:'E',name:'N',type:'json'},makeDraft('{"a":1}','json'));
+  const {ws,run}=fixture(t),old=legacyWorkspace();
   old.drafts[0].rawInput='{broken';old.drafts[0].validationState='invalid';
   run('import',{backup:exportBackup(old)});const pkg=ws.legacyExport({id:'admin',username:'admin'});
   const db=openDatabase(':memory:');t.after(()=>db.close());db.prepare('INSERT INTO users VALUES (?,?,?,?,1,0,?)').run('admin','admin','unused','admin','2026-09-21T00:00:00Z');const target=new Workspace(db);
@@ -135,7 +146,7 @@ test('legacy export import rejects tampered version content, hash, and recovery 
   assert.equal(target.read().legacy[0].drafts[0].rawInput,'{broken');
 });
 test('mapLegacy rejects tampered stored history without changing workspace state',t=>{
-  const {ws,db,run,data}=fixture(t),old=emptyState();addConfig(old,{project:'P',environment:'E',name:'N',type:'json'},makeDraft('{"a":1}','json'));
+  const {ws,db,run,data}=fixture(t),old=legacyWorkspace();
   run('import',{backup:exportBackup(old)});const stored=ws.read();stored.legacy[0].versions[0].normalizedContent.a=999;
   db.prepare('UPDATE workspace SET data=? WHERE id=1').run(JSON.stringify(stored));
   assert.throws(()=>run('mapLegacy',{legacyId:stored.legacy[0].id,regionId:data.regionId,environmentTypeId:data.environmentTypeId,configNameId:data.configNameId}),e=>e.status===400);

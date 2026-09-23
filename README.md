@@ -8,15 +8,14 @@
 
 | 工具 | 入口 | 用途 |
 | --- | --- | --- |
-| 运维工具箱 | [Tools/ops_toolkit.html](Tools/ops_toolkit.html) | Kubernetes env / JSON 转换、格式化与排序、证书解析、本地配置管理、版本归档与备份 |
 | 在线运维工具箱 | [启动说明](Tools/ops-toolkit/README.md#在线启动) | 账号密码登录、白名单及三角色权限、共享配置与版本编辑／提交署名 |
 | Pointer API 可视化工具 | [Tools/point_tools.html](Tools/point_tools.html) | 配置服务地址、上传图片、查看检测结果、时延和可视化图层；需要可访问的 Pointer API 服务 |
 
-运维工具箱离线版可直接用 Chrome 或 Edge 打开，在线版需要启动 Node.js 服务。两者解析依赖和样式均已内嵌，转换和证书解析在浏览器本地执行。
+运维工具箱需要启动 Node.js 服务，通过浏览器访问。解析依赖和样式均已内嵌，转换和证书解析在浏览器本地执行。
 
-离线配置与历史版本保存在当前浏览器来源的 IndexedDB，在线数据保存在服务端 SQLite，可通过导入、导出备份迁移。数据不会随 Git 提交自动同步；完整备份包含原始配置值，分享时可使用脱敏导出。
+配置与历史版本保存在服务端，默认使用 SQLite，可通过导入、导出备份迁移。数据不会随 Git 提交自动同步；完整备份包含原始配置值，分享时可使用脱敏导出。旧版 v1/v2 备份仍可导入在线版的待映射区。
 
-需求范围见[离线功能需求设计](../Design-doc/20260921-120758_运维工具箱离线功能需求设计/需求设计文档.md)和[登录权限与版本署名设计](../Design-doc/20260921-151727_用户登录权限管理与版本署名/需求设计文档.md)。所有设计文档统一存放于同级 [Design-doc](../Design-doc/README.md) 仓库，按首次创建时间戳和需求概要组织，每个需求目录包含设计文档和设计版本记录。工具页面尚未提供 Git 自动同步功能。
+当前功能、数据边界及部署方式见[运维工具箱说明](Tools/ops-toolkit/README.md)。工具页面尚未提供 Git 自动同步功能。
 
 ## 目录结构
 
@@ -24,7 +23,6 @@
 Toolkits/
 ├─ README.md                         # 工程介绍与 Git 使用说明
 ├─ Tools/
-│  ├─ ops_toolkit.html               # 已构建的离线运维工具箱
 │  ├─ ops_toolkit_online.html        # 在线页面，由业务服务提供
 │  ├─ point_tools.html               # Pointer API 可视化工具
 │  └─ ops-toolkit/                   # 运维工具箱源码工程
@@ -32,7 +30,6 @@ Toolkits/
 │     ├─ server/                     # 账号、权限、共享配置 API 与 SQLite
 │     ├─ tests/                      # 单元、浏览器与性能验证
 │     ├─ build.mjs                   # 单文件构建脚本
-│     ├─ serve.mjs                   # 本地静态服务
 │     └─ package.json               # 依赖与开发命令
 ├─ docs/openspec/                    # OpenSpec 配置、规格与变更记录
 └─ 知识库/                           # 工具与工作流使用指南
@@ -40,7 +37,7 @@ Toolkits/
 
 ## 快速使用与开发
 
-仅使用工具时，下载工程后直接打开对应 HTML 文件即可。详细操作、数据边界和第三方许可证见[运维工具箱说明](Tools/ops-toolkit/README.md)。
+Pointer 工具可直接打开对应 HTML 文件；运维工具箱需按下述步骤启动服务。详细操作、数据边界和第三方许可证见[运维工具箱说明](Tools/ops-toolkit/README.md)。
 
 开发运维工具箱需要 Node.js 24 或满足依赖要求的更新版本。以下命令使用 Windows PowerShell；`E:\Toolkits` 请替换为实际工程路径。
 
@@ -49,12 +46,13 @@ Set-Location E:\Toolkits\Tools\ops-toolkit
 npm.cmd ci
 npm.cmd test
 npm.cmd run build
-npm.cmd run serve
+npm.cmd run init-admin
+npm.cmd start
 ```
 
-启动后访问 `http://127.0.0.1:4173/`，按 `Ctrl+C` 停止服务。长期管理配置时保持访问协议、主机名和端口一致，以便继续访问同一份浏览器数据。
+首次安装时初始化管理员；已有账号无需重复初始化。启动后访问 `http://127.0.0.1:4173/`，按 `Ctrl+C` 停止服务。配置保存在服务端，数据目录与部署参数见启动说明。
 
-修改 `src/` 后重新执行 `npm.cmd run build`，构建结果写入 `Tools/ops_toolkit.html`，提交时一并纳入对应产物。需要浏览器验证时执行 `npm.cmd run test:browser`，默认使用本机安装的 Chrome；性能验证执行 `node tests/performance.mjs`。
+修改 `src/` 后重新执行 `npm.cmd run build`，构建结果写入 `Tools/ops_toolkit_online.html`，提交时一并纳入对应产物。需要在线浏览器验证时执行 `npm.cmd run test:browser`，默认使用本机安装的 Chrome；性能验证执行 `node tests/performance.mjs`。
 
 ## Git 安装
 

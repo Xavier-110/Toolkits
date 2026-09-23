@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { emptyState } from '../src/store.js';
+import { createWorkspaceState } from '../src/workspace-state.js';
 
 export function openDatabase(filename) {
   if (filename !== ':memory:') mkdirSync(dirname(filename), {recursive:true});
@@ -18,7 +18,7 @@ export function openDatabase(filename) {
       csrf TEXT NOT NULL, expiresAt INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS workspace (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);`);
-  db.prepare('INSERT OR IGNORE INTO workspace VALUES (1, ?)').run(JSON.stringify(emptyState()));
+  db.prepare('INSERT OR IGNORE INTO workspace VALUES (1, ?)').run(JSON.stringify(createWorkspaceState()));
   return db;
 }
 export function transaction(db, fn) {
